@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Useful Tools</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; }
+    #root { width: 100%; height: 100%; }
+  </style>
+  <script src="lib/react.min.js"></script>
+  <script src="lib/react-dom.min.js"></script>
+  <script src="lib/material-ui.min.js"></script>
+  <script src="lib/babel.min.js"></script>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const {
+  ThemeProvider, createTheme, CssBaseline,
+  Box, Container, Typography, Grid, Card, CardActionArea, CardMedia, CardContent,
+} = MaterialUI;
+
+const theme = createTheme({
+  palette: {
+    mode: 'dark',
+    background: { default: '#12141a', paper: '#1a1d24' },
+    primary: { main: '#4299e1' },
+  },
+  typography: { fontFamily: 'sans-serif' },
+});
+
+const apps = [
+  // {
+  //   title: 'Tool Name',
+  //   description: 'ツールの説明',
+  //   image: 'images/tool-name.png',
+  //   href: 'tool-name/index.html',
+  // },
+];
+
+function AppCard({ app }) {
+  return (
+    <Card sx={{
+      height: '100%',
+      display: 'flex',
+      flexDirection: 'column',
+      bgcolor: 'background.paper',
+      transition: 'transform 0.15s ease, box-shadow 0.15s ease',
+      '&:hover': {
+        transform: 'translateY(-4px)',
+        boxShadow: 6,
+      },
+    }}>
+      <CardActionArea
+        component="a"
+        href={app.href}
+        sx={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'stretch' }}
+      >
+        <CardMedia
+          component="img"
+          image={app.image}
+          alt={app.title}
+          sx={{ height: 220, objectFit: 'cover', bgcolor: '#000' }}
+        />
+        <CardContent sx={{ flexGrow: 1 }}>
+          <Typography variant="h6" component="div" gutterBottom>
+            {app.title}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {app.description}
+          </Typography>
+        </CardContent>
+      </CardActionArea>
+    </Card>
+  );
+}
+
+function App() {
+  return (
+    <Box sx={{ minHeight: '100vh', py: 6 }}>
+      <Container maxWidth="md">
+        <Typography variant="h4" component="h1" align="center" gutterBottom>
+          Useful Tools
+        </Typography>
+        <Typography variant="body1" color="text.secondary" align="center" sx={{ mb: 5 }}>
+          使用するツールを選択してください
+        </Typography>
+        <Grid container spacing={4}>
+          {apps.map((app) => (
+            <Grid item xs={12} sm={6} key={app.title}>
+              <AppCard app={app} />
+            </Grid>
+          ))}
+        </Grid>
+      </Container>
+    </Box>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(
+  <ThemeProvider theme={theme}>
+    <CssBaseline />
+    <App />
+  </ThemeProvider>
+);
+</script>
+
+</body>
+</html>

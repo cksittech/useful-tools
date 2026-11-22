@@ -1,0 +1,10 @@
+{
+  "api_port": 9014,
+  "poll_interval_ms": 500,
+  "max_concurrent_runs": 10,
+  "generated_images_dir": "~/.codex/generated_images/",
+  "codex_startup_max_attempts": 3,
+  "codex_startup_retry_delay_sec": 1.5,
+  "codex_model": "gpt-6.2-sol",
+  "codex_reasoning_effort": "medium"
+}

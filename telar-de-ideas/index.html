@@ -1,0 +1,1928 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Telar de Ideas</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; font-family: sans-serif; }
+    /* "Still in progress" card border (AppNode, driven by
+       compute_run_states in common.py) — blinks red while a Created Node
+       is actively executing, a Gate is still waiting on its compare wires,
+       or a Group contains such a node. */
+    @keyframes nodeRunningBlink {
+      0%, 100% { border-color: #d32f2f; outline-color: #d32f2f; }
+      50% { border-color: #ffcdd2; outline-color: #ffcdd2; }
+    }
+  </style>
+  <link rel="stylesheet" href="lib/reactflow.css">
+  <script src="lib/react.min.js"></script>
+  <script src="lib/react-dom.min.js"></script>
+  <script>
+    // @xyflow/react's UMD build expects the automatic JSX runtime as a
+    // global (no standalone UMD build of react/jsx-runtime exists) — this
+    // is a faithful manual jsx/jsxs shim via React.createElement.
+    (function () {
+      function jsx(type, props, key) {
+        const p = props || {};
+        if (key !== undefined) p.key = key;
+        return React.createElement(type, p);
+      }
+      window.jsxRuntime = { jsx, jsxs: jsx, Fragment: React.Fragment };
+    })();
+  </script>
+  <script src="lib/reactflow.umd.js"></script>
+  <script src="lib/material-ui.min.js"></script>
+  <script src="lib/icons-data.js"></script>
+  <script src="data.js"></script>
+  <script src="common.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script>
+    const {
+      Box, AppBar, Toolbar, Typography, Button, IconButton, TextField,
+      Select, MenuItem, FormControl, Paper, Divider, Fab, InputAdornment,
+      Dialog, DialogTitle, DialogContent, DialogActions, Chip, CircularProgress, LinearProgress,
+      Tooltip, Alert, Snackbar, ToggleButton, ToggleButtonGroup, SvgIcon, Link,
+      ThemeProvider, createTheme, colors,
+    } = MaterialUI;
+    // Labels render as written (MUI uppercases by default). Title Case for buttons,
+    // toggles, titles and node names; sentence case for labels, captions, tooltips, chips.
+    const THEME = createTheme({
+      typography: { button: { textTransform: 'none' }, overline: { textTransform: 'none' } },
+    });
+    // For colors outside sx (React Flow styles, template strings).
+    const PALETTE = THEME.palette;
+    const {
+      ReactFlow, ReactFlowProvider, Background, BackgroundVariant,
+      Handle, Position, BaseEdge, EdgeLabelRenderer, getBezierPath,
+      useReactFlow, useUpdateNodeInternals,
+    } = window.ReactFlow;
+    const { useState, useRef, useEffect, useMemo, useCallback } = React;
+    const h = React.createElement;
+
+    // Real Material Design icon paths (same set @mui/icons-material ships),
+    // kept as a tiny local data file instead of pulling in the whole
+    // icons-material package — see Codex/gui's lib/icons-data.js. Each entry is one <path>.
+    const ICON_PATHS = Object.fromEntries(window.MUI_ICONS.map(([name, svg]) => [name, svg.match(/ d="([^"]+)"/)[1]]));
+    function Icon({ name, size = 20, style }) {
+      return h(SvgIcon, { sx: { fontSize: size, display: 'block' }, style }, h('path', { d: ICON_PATHS[name] }));
+    }
+
+    // A row's connection dot over React Flow's <Handle> (which owns connecting);
+    // `top` = the row's vertical center.
+    function PortHandle(props) {
+      const { nodeId, port, isOutput, top, colorOverride, onContextMenu } = props;
+      const color = colorOverride || PORT_UNCONNECTED_COLOR;
+      return h(Handle, {
+        type: isOutput ? 'source' : 'target',
+        position: isOutput ? Position.Right : Position.Left,
+        id: port.id,
+        onContextMenu: e => { e.preventDefault(); e.stopPropagation(); onContextMenu && onContextMenu(nodeId, port.id); },
+        style: {
+          top, width: DOT_SIZE, height: DOT_SIZE, borderRadius: '50%',
+          background: color, border: `2px solid ${PALETTE.common.white}`, boxShadow: '0 0 0 1px rgba(0,0,0,0.25)',
+          pointerEvents: 'all', cursor: isOutput ? 'crosshair' : 'default',
+        },
+      });
+    }
+
+    // Small square colored Button for header actions (stop/retry/delete/view).
+    function HeaderActionButton(props) {
+      const { color, variant, disabled, onClick, title, children } = props;
+      const btn = h(Button, {
+        size: 'small', color, variant: variant || 'contained', disabled,
+        className: 'nodrag',
+        onMouseDown: e => e.stopPropagation(),
+        onClick: e => { e.stopPropagation(); onClick(); },
+        sx: {
+          minWidth: 24, width: 24, height: 22, p: 0, fontSize: 12, lineHeight: 1, boxShadow: 'none', '&:hover': { boxShadow: 'none' },
+          // A disabled contained button's default dark fill nearly
+          // vanishes against these colored headers — fade to a light
+          // translucent chip instead.
+          '&.Mui-disabled': { bgcolor: 'rgba(255,255,255,0.25)', color: 'rgba(255,255,255,0.65)' },
+        },
+      }, children);
+      // Tooltip needs a ref-forwarding child; a disabled Button won't fire
+      // hover events, so wrap it in a span when disabled.
+      return h(Tooltip, { title }, disabled ? h('span', null, btn) : btn);
+    }
+
+    // Shows exactly what was sent to Codex (prompt + output schema) and
+    // what came back, for whichever template node is open.
+    function NodeDetailDialog(props) {
+      const { open, node, onClose } = props;
+      const req = node && node.data.lastRequest;
+      const res = node && node.data.lastResponse;
+      const prev = node && node.data.previousRun;
+      const isRunning = node && (node.data.runStatus === 'running' || node.data.runStatus === 'starting');
+      return h(Dialog, { open, onClose, maxWidth: 'sm', fullWidth: true },
+        h(DialogTitle, null, 'Node Details'),
+        h(DialogContent, { dividers: true },
+          h(Typography, { variant: 'overline', color: 'text.secondary', sx: { display: 'block' } }, 'Request'),
+          req
+            ? h(Box, { sx: { mb: 2 } },
+                h(Typography, { variant: 'body2', sx: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', mb: req.outputSchema ? 1 : 0 } }, req.prompt),
+                req.outputSchema && h(Box, { sx: { bgcolor: 'grey.100', borderRadius: 1, p: 1 } },
+                  h(Typography, { variant: 'caption', color: 'text.secondary', sx: { display: 'block', mb: 0.5 } }, 'Output Schema'),
+                  h(Typography, {
+                    variant: 'body2', component: 'pre',
+                    sx: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', m: 0, fontFamily: 'monospace', fontSize: 12 },
+                  }, JSON.stringify(req.outputSchema, null, 2))
+                )
+              )
+            : h(Typography, { variant: 'body2', color: 'text.secondary', sx: { mb: 2 } }, '(not run yet)'),
+          h(Typography, { variant: 'overline', color: 'text.secondary', sx: { display: 'block' } }, 'Response'),
+          isRunning
+            ? h(LinearProgress, { sx: { mt: 1 } })
+            : h(Typography, {
+                variant: 'body2', component: 'pre',
+                sx: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', m: 0, fontFamily: 'monospace', fontSize: 12 },
+              }, (res && res.raw) || '(no response)'),
+          // The attempt before the latest one (e.g. the run a Wrapper retry replaced).
+          prev && h(Box, { sx: { mt: 2, pt: 1, borderTop: '1px solid', borderColor: 'divider' } },
+            h(Typography, { variant: 'overline', color: 'text.secondary', sx: { display: 'block' } }, 'Previous Response'),
+            h(Typography, { variant: 'caption', color: prev.runStatus === 'done' ? 'text.secondary' : 'error', sx: { display: 'block', mb: 0.5 } },
+              [prev.runStatus || 'unknown', prev.response && prev.response.threadId, prev.runError].filter(Boolean).join(' · ')),
+            h(Typography, {
+              variant: 'body2', component: 'pre',
+              sx: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', m: 0, fontFamily: 'monospace', fontSize: 12 },
+            }, (prev.response && prev.response.raw) || '(no response)')
+          )
+        ),
+        h(DialogActions, null, h(Button, { onClick: onClose }, 'Close'))
+      );
+    }
+
+    // Shared "one-line error message" look — every node type's transient
+    // failure text renders identically instead of each inventing its own
+    // Typography/color/truncation combo.
+    function ErrorText({ children }) {
+      return h(Typography, { variant: 'caption', color: 'error', sx: { wordBreak: 'break-all' } }, children);
+    }
+
+    // Shared vertical layout for multi-control bodies.
+    function BodyStack({ children }) {
+      return h(Box, { sx: { display: 'flex', flexDirection: 'column', gap: 1 } }, children);
+    }
+
+    // ---- Card body widgets ----
+    // A node's body is a list of widgets its type's body(node, view) returns
+    // (POST /evaluate; see common.py "Node types"). Unknown kinds render nothing.
+    const CAPTION_COLORS = { error: 'error', success: 'success.main' };
+    const DARK_BOX_SX = { bgcolor: 'grey.900', color: 'common.white', borderRadius: 1, p: 1, wordBreak: 'break-all', fontFamily: 'monospace', fontSize: 13 };
+
+    function chipOf(w, key) {
+      return h(Chip, {
+        key, size: 'small', color: w.color || 'default', variant: w.variant || 'filled', label: w.label,
+        sx: { alignSelf: 'flex-start' },
+        icon: w.icon ? h(Icon, { name: w.icon, size: 16, style: { color: 'inherit' } }) : undefined,
+      });
+    }
+
+    const BODY_WIDGETS = {
+      caption: w => h(Typography, { variant: 'caption', color: CAPTION_COLORS[w.color] || 'text.secondary' }, w.text),
+      chip: w => chipOf(w),
+      chips: w => h(Box, { sx: { display: 'flex', flexWrap: 'wrap', gap: 0.5 } },
+        (w.items || []).length
+          ? w.items.map((c, i) => chipOf(c, i))
+          : w.empty && h(Typography, { variant: 'caption', color: 'text.secondary' }, w.empty)),
+      value: w => h(Box, { sx: { ...DARK_BOX_SX, minHeight: 40 } }, w.text),
+      pairs: w => h(Box, { sx: { ...DARK_BOX_SX, display: 'flex', flexDirection: 'column', gap: 0.5 } },
+        (w.rows || []).map((r, i) => h(Box, { key: i },
+          h(Box, { component: 'span', sx: { color: colors.blue[200] } }, `${r.name}: `), r.value))),
+      path: w => h(Box, { sx: { bgcolor: 'grey.100', borderRadius: 1, p: 1, wordBreak: 'break-all' } },
+        w.text === undefined
+          ? h(Typography, { variant: 'caption', color: 'text.secondary' }, w.empty)
+          : h(Typography, { variant: 'caption', sx: { fontFamily: 'monospace', wordBreak: 'break-all' } }, w.text)),
+      open: (w, { id, data }) => h(Button, {
+        size: 'small', variant: 'outlined', className: 'nodrag',
+        onClick: () => data.onOpenPath(id, w.path),
+      }, w.label),
+      error: w => h(ErrorText, null, w.text),
+      alert: w => h(Alert, { severity: w.severity || 'error', variant: 'outlined', sx: { py: 0 } }, w.text),
+    };
+
+    function WidgetBody({ widgets, id, data }) {
+      if (!widgets || !widgets.length) return null;
+      return h(BodyStack, null, widgets.map((w, i) => {
+        const render = BODY_WIDGETS[w.kind];
+        return render ? h(React.Fragment, { key: i }, render(w, { id, data })) : null;
+      }));
+    }
+
+    // ---- Edit-panel fields ----
+    // The right-side panel's form for the selected node: its type's FIELDS /
+    // fields(node) widgets (POST /evaluate). Values always come from the local
+    // node data (so typing never waits on the server); edits apply immediately.
+    function FieldControl({ field, value, onChange, disabled, autoFocus }) {
+      const common = { size: 'small', fullWidth: true, variant: 'outlined', disabled, autoFocus };
+      switch (field.kind) {
+        case 'text':
+          return h(TextField, {
+            ...common, label: field.label, placeholder: field.placeholder, helperText: field.helper,
+            multiline: !!field.multiline, minRows: field.multiline ? (field.rows || 1) : undefined,
+            value: value ?? '', onChange: e => onChange(e.target.value),
+          });
+        case 'number':
+          return h(TextField, {
+            ...common, label: field.label, type: 'number', helperText: field.helper,
+            value: value ?? field.default ?? '', onChange: e => onChange(numberFieldValue(field, e.target.value)),
+          });
+        case 'select':
+          return h(FormControl, { size: 'small', fullWidth: true, disabled },
+            h(Select, { value: value ?? field.default ?? '', onChange: e => onChange(e.target.value) },
+              (field.options || []).map(o => h(MenuItem, { key: String(o.value), value: o.value }, o.label))));
+        case 'toggle':
+          return h(ToggleButtonGroup, {
+            size: 'small', exclusive: true, disabled, value: value ?? field.default ?? null,
+            onChange: (e, next) => { if (next !== null) onChange(next); },
+          }, (field.options || []).map(o => h(ToggleButton, { key: String(o.value), value: o.value }, o.label)));
+        default:
+          return null;
+      }
+    }
+
+    // A list of strings (keepOne: never empty — removing the last row blanks it).
+    function ListField({ field, value, onChange, disabled }) {
+      const list = Array.isArray(value) && value.length ? value : (field.keepOne ? [''] : []);
+      const set = next => onChange(next.length || !field.keepOne ? next : ['']);
+      return h(BodyStack, null,
+        list.map((v, i) => h(Box, { key: i, sx: { display: 'flex', alignItems: 'center', gap: 0.5 } },
+          h(TextField, {
+            size: 'small', variant: 'outlined', fullWidth: true, disabled, placeholder: field.placeholder,
+            value: v, onChange: e => set(list.map((val, j) => (j === i ? e.target.value : val))),
+          }),
+          h(IconButton, { size: 'small', disabled: disabled || (field.keepOne && list.length <= 1), onClick: () => set(list.filter((_, j) => j !== i)) },
+            h(Icon, { name: 'Close', size: 14 }))
+        )),
+        h(Button, { size: 'small', variant: 'outlined', disabled, onClick: () => set([...list, '']) }, field.addLabel || '+ Add')
+      );
+    }
+
+    // A list of objects, one bordered box of sub-fields each (the first one gets the remove button).
+    function RecordsField({ field, value, onChange, disabled }) {
+      const list = Array.isArray(value) ? value : [];
+      const setAt = (i, patch) => onChange(list.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+      return h(BodyStack, null,
+        list.map((rec, i) => h(Box, { key: i, sx: { display: 'flex', flexDirection: 'column', gap: 1, p: 1, border: 1, borderColor: 'divider', borderRadius: 1 } },
+          (field.fields || []).map((sub, k) => {
+            const control = h(FieldControl, {
+              field: sub, value: (rec || {})[sub.key], disabled, onChange: v => setAt(i, { [sub.key]: v }),
+            });
+            return k > 0 ? h(React.Fragment, { key: k }, control) : h(Box, { key: k, sx: { display: 'flex', alignItems: 'center', gap: 0.5 } },
+              control,
+              h(IconButton, { size: 'small', disabled, onClick: () => onChange(list.filter((_, j) => j !== i)) }, h(Icon, { name: 'Close', size: 14 })));
+          })
+        )),
+        h(Button, {
+          size: 'small', variant: 'outlined', disabled,
+          onClick: () => onChange([...list, JSON.parse(JSON.stringify(field.newItem || {}))]),
+        }, field.addLabel || '+ Add')
+      );
+    }
+
+    function FieldsForm({ node, fields, updateData, isRunningWorkflow }) {
+      const disabled = isRunningWorkflow;
+      let focused = false;
+      return h(BodyStack, null, fields.map((field, i) => {
+        if (field.kind === 'caption') {
+          return h(Typography, { key: i, variant: 'caption', color: 'text.secondary' }, field.text);
+        }
+        if (field.kind === 'button') {
+          return h(Button, {
+            key: i, size: 'small', variant: 'outlined', color: field.color || 'primary', disabled,
+            onClick: () => {
+              const patch = JSON.parse(JSON.stringify(field.set || {}));
+              (field.unset || []).forEach(k => { patch[k] = undefined; });
+              updateData(node.id, patch);
+            },
+          }, field.label);
+        }
+        const props = {
+          key: i, field, disabled, value: node.data[field.key],
+          onChange: v => updateData(node.id, fieldPatch(field, v)),
+        };
+        if (field.kind === 'list') return h(ListField, props);
+        if (field.kind === 'records') return h(RecordsField, props);
+        // The first plain input gets the focus when the panel opens.
+        const autoFocus = !focused && (field.kind === 'text' || field.kind === 'number');
+        if (autoFocus) focused = true;
+        return h(FieldControl, { ...props, autoFocus });
+      }));
+    }
+
+    // Wrapper (core type, CUSTOM_FORM "wrapper"): condition groups appear once a
+    // Created Node is linked (conditions use its output fields). Groups are OR'd,
+    // rows within a group AND'd. `edges` resolves the link.
+    function WrapperEditForm({ node, updateData, nodes, edges, isRunningWorkflow }) {
+      const linkedId = wrapperLinkedNodeId(node.id, edges);
+      const linkedNode = linkedId ? nodes[linkedId] : null;
+      const outputFields = linkedNode ? (linkedNode.data.outputs || []) : [];
+      const groups = node.data.conditionGroups || [];
+
+      function setGroups(next) { updateData(node.id, { conditionGroups: next }); }
+      function updateCond(gi, ci, patch) {
+        setGroups(groups.map((g, i) => i !== gi ? g : g.map((c, j) => j !== ci ? c : { ...c, ...patch })));
+      }
+      function addCond(gi) {
+        if (!outputFields.length) return;
+        setGroups(groups.map((g, i) => i !== gi ? g : [...g, { key: outputFields[0].key, op: 'eq', value: '' }]));
+      }
+      function removeCond(gi, ci) {
+        setGroups(groups.map((g, i) => i !== gi ? g : g.filter((_, j) => j !== ci)));
+      }
+      function addGroup() {
+        setGroups([...groups, outputFields.length ? [{ key: outputFields[0].key, op: 'eq', value: '' }] : []]);
+      }
+      function removeGroup(gi) {
+        setGroups(groups.filter((_, i) => i !== gi));
+      }
+
+      return h(BodyStack, null,
+        h(RetriesField, {
+          disabled: isRunningWorkflow,
+          value: node.data.maxRetries != null ? node.data.maxRetries : 3,
+          onChange: v => updateData(node.id, { maxRetries: v }),
+        }),
+        !linkedNode
+          ? h(Typography, { variant: 'caption', color: 'text.secondary' },
+              'Link an AI Node via the Ref dot below to set output conditions.')
+          : outputFields.length === 0
+            ? h(Typography, { variant: 'caption', color: 'text.secondary' }, '(linked node defines no outputs)')
+            : h(BodyStack, null,
+                groups.length === 0 && h(Typography, { variant: 'caption', color: 'text.secondary' },
+                  'No conditions — always considered passed.'),
+                groups.map((group, gi) => h(Box, {
+                  key: gi,
+                  sx: { border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 0.75, display: 'flex', flexDirection: 'column', gap: 0.5 },
+                },
+                  gi > 0 && h(Typography, { variant: 'caption', color: 'text.secondary', sx: { fontWeight: 'bold' } }, 'OR'),
+                  group.map((cond, ci) => h(Box, { key: ci, sx: { display: 'flex', alignItems: 'center', gap: 0.5 } },
+                    h(Select, {
+                      size: 'small', value: cond.key, disabled: isRunningWorkflow, sx: { minWidth: 0, flex: 1 },
+                      onChange: e => updateCond(gi, ci, { key: e.target.value }),
+                    },
+                      outputFields.map(o => h(MenuItem, { key: o.key, value: o.key }, o.name || o.key))
+                    ),
+                    // Σ: compare the sum over this Wrapper's attempts (first run + retries).
+                    h(Tooltip, { title: cond.total ? 'Comparing the total across attempts' : 'Comparing this attempt\'s value (click for the total)' },
+                      h(ToggleButton, {
+                        value: 'total', size: 'small', selected: !!cond.total, disabled: isRunningWorkflow,
+                        sx: { px: 0.75, py: 0.25, minWidth: 0 },
+                        onChange: () => updateCond(gi, ci, { total: !cond.total }),
+                      }, 'Σ')),
+                    h(Select, {
+                      size: 'small', value: cond.op, disabled: isRunningWorkflow, sx: { minWidth: 56 },
+                      onChange: e => updateCond(gi, ci, { op: e.target.value }),
+                    },
+                      WRAPPER_CONDITION_OPS.map(op => h(MenuItem, { key: op, value: op }, WRAPPER_OP_LABELS[op]))
+                    ),
+                    h(TextField, {
+                      size: 'small', variant: 'outlined', disabled: isRunningWorkflow, sx: { flex: 1, minWidth: 0 },
+                      placeholder: (cond.op === 'eq' || cond.op === 'neq') ? 'value(s), comma-separated' : 'number',
+                      value: cond.value, onChange: e => updateCond(gi, ci, { value: e.target.value }),
+                    }),
+                    h(IconButton, { size: 'small', disabled: isRunningWorkflow, onClick: () => removeCond(gi, ci) },
+                      h(Icon, { name: 'Close', size: 14 }))
+                  )),
+                  h(Box, { sx: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+                    h(Button, { size: 'small', disabled: isRunningWorkflow, onClick: () => addCond(gi) }, '+ AND Condition'),
+                    h(Button, { size: 'small', color: 'error', disabled: isRunningWorkflow, onClick: () => removeGroup(gi) }, 'Remove Group')
+                  )
+                )),
+                h(Button, { size: 'small', variant: 'outlined', disabled: isRunningWorkflow, onClick: addGroup }, '+ OR Group')
+              )
+      );
+    }
+
+    // CUSTOM_FORM name -> edit form, for core types whose form needs other nodes.
+    const CUSTOM_EDIT_FORMS = { wrapper: WrapperEditForm };
+
+    // The one node component for every type (React Flow type "app"; the node's own
+    // type is data.__type). Ports/body come from POST /evaluate (data.__view), before
+    // its first answer from the type's static ports (data.__typeInfo). React Flow owns
+    // drag/pan/zoom/connect; resizing is hand-rolled (NodeResizer's full-length strips
+    // would cover the side ports).
+    function AppNode(props) {
+      const { id, data, selected } = props;
+      const type = data.__type;
+      const node = { id, type, data };
+      const isRunning = data.runStatus === 'running' || data.runStatus === 'starting';
+      // Border state, computed in FlowApp's runStatesById (needs sibling nodes).
+      const isCardRunning = !!data.__isRunning;
+      const isCardPassed = !!data.__isPassed;
+      const canRetry = type === 'template' && !isRunning && !data.isRunningWorkflow;
+      const [detailOpen, setDetailOpen] = useState(false);
+      const nodeWidth = data.__width || NODE_WIDTH;
+      const def = data.__view || data.__typeInfo || { title: type, inputs: [], outputs: [] };
+      const maxRows = Math.max(def.inputs.length, def.outputs.length, 1);
+      const rowsBottom = HEADER_H + maxRows * PORT_ROW_H;
+      const updateNodeInternals = useUpdateNodeInternals();
+      // Ports come from the node's data (and arrive from the server after the
+      // static fallback) — their ids/count can change without the box resizing;
+      // force React Flow to re-measure handles whenever they do.
+      const portKey = def.inputs.map(p => p.id).join('|') + '>' + def.outputs.map(p => p.id).join('|');
+      useEffect(() => { updateNodeInternals(id); }, [id, portKey, updateNodeInternals]);
+
+      const rows = [];
+      for (let i = 0; i < maxRows; i++) {
+        const inp = def.inputs[i];
+        const out = def.outputs[i];
+        const top = HEADER_H + i * PORT_ROW_H + PORT_ROW_H / 2;
+        rows.push(h(Box, { key: i, sx: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: PORT_ROW_H } },
+          inp
+            ? h(Box, { sx: { display: 'flex', alignItems: 'center', gap: 0.5, pl: '4px' } },
+                h(PortHandle, {
+                  nodeId: id, port: inp, isOutput: false, top, onContextMenu: data.onPortContextMenu,
+                  colorOverride: data.connectedPorts && data.connectedPorts.has(id + ':' + inp.id + ':in')
+                    ? PORT_CONNECTED_COLOR : PORT_UNCONNECTED_COLOR,
+                }),
+                h(Typography, { variant: 'caption', color: 'text.secondary', sx: { pl: 1.5 } }, inp.label)
+              )
+            : h(Box, null),
+          out
+            ? h(Box, { sx: { display: 'flex', alignItems: 'center', gap: 0.5, pr: '4px' } },
+                h(Typography, {
+                  variant: 'caption',
+                  // The default thread_id output is called out visually
+                  // (blue, uppercase) to set it apart from user-defined outputs.
+                  color: out.id === THREAD_ID_OUTPUT_KEY ? 'primary.main' : 'text.secondary',
+                  sx: {
+                    pr: 1.5,
+                    ...(out.id === THREAD_ID_OUTPUT_KEY ? { textTransform: 'uppercase', fontWeight: 'bold' } : null),
+                  },
+                }, out.label),
+                h(PortHandle, {
+                  nodeId: id, port: out, isOutput: true, top, onContextMenu: data.onPortContextMenu,
+                  colorOverride: out.type === 'trigger' ? TRIGGER_COLOR
+                    : (data.connectedPorts && data.connectedPorts.has(id + ':' + out.id + ':out')
+                        ? PORT_CONNECTED_COLOR : PORT_UNCONNECTED_COLOR),
+                })
+              )
+            : h(Box, null)
+        ));
+      }
+
+      const body = h(WidgetBody, { widgets: data.__view && data.__view.body, id, data });
+
+      const cardEl = h(Paper, {
+        elevation: selected ? 6 : 2,
+        sx: {
+          // border-box + a fixed-width border keep the outer size exactly
+          // nodeWidth x grid-aligned height in every state; the thicker
+          // running/passed ring is an outline, which takes no layout space.
+          width: nodeWidth, position: 'relative', boxSizing: 'border-box',
+          border: `${NODE_BORDER}px solid`,
+          borderColor: isCardRunning ? 'error.main' : isCardPassed ? 'success.main' : selected ? 'primary.main' : 'transparent',
+          outline: isCardRunning ? `2px solid ${PALETTE.error.main}` : isCardPassed ? `2px solid ${PALETTE.success.main}` : 'none',
+          borderRadius: '10px',
+          userSelect: 'none',
+          animation: isCardRunning ? 'nodeRunningBlink 1s ease-in-out infinite' : 'none',
+        },
+      },
+        // Trigger dot. On a Wrapper it only lets a Group's Ref port make it a member —
+        // a Wrapper itself is never run or gated.
+        (type === 'template' || type === 'wrapper') && h(Handle, {
+          type: 'target', position: Position.Top, id: TRIGGER_PORT_ID,
+          onContextMenu: e => { e.preventDefault(); e.stopPropagation(); data.onPortContextMenu(id, TRIGGER_PORT_ID); },
+          style: {
+            width: DOT_SIZE, height: DOT_SIZE, borderRadius: '50%',
+            background: (data.connectedPorts && data.connectedPorts.has(id + ':' + TRIGGER_PORT_ID + ':in')) ? TRIGGER_COLOR : PORT_UNCONNECTED_COLOR,
+            border: `2px solid ${PALETTE.common.white}`, boxShadow: '0 0 0 1px rgba(0,0,0,0.25)',
+            // zIndex above the invisible n/s resize strips below (both are
+            // position:absolute with no z-index of their own) — without
+            // this, whichever renders later in the DOM wins the hit-test
+            // for the strip's dead-center overlap with this dot, and a
+            // drag started from dead-center resizes the node instead of
+            // starting a connection.
+            pointerEvents: 'all', cursor: 'default', top: -1, zIndex: 2,
+          },
+        }),
+        // Group's Ref dot (membership, no signal) — at the bottom so it doesn't read as a trigger input.
+        type === 'group' && h(Handle, {
+          type: 'source', position: Position.Bottom, id: GROUP_REF_PORT_ID,
+          onContextMenu: e => { e.preventDefault(); e.stopPropagation(); data.onPortContextMenu(id, GROUP_REF_PORT_ID); },
+          style: {
+            width: DOT_SIZE, height: DOT_SIZE, borderRadius: '50%',
+            background: (data.connectedPorts && data.connectedPorts.has(id + ':' + GROUP_REF_PORT_ID + ':out')) ? GROUP_REF_COLOR : PORT_UNCONNECTED_COLOR,
+            border: `2px solid ${PALETTE.common.white}`, boxShadow: '0 0 0 1px rgba(0,0,0,0.25)',
+            pointerEvents: 'all', cursor: 'default', bottom: -1, zIndex: 2,
+          },
+        }),
+        // Wrapper's linking control — same idea as Group's Ref dot, just
+        // 1:1 (see wrapperLinkedNodeId, common.js) instead of many.
+        type === 'wrapper' && h(Handle, {
+          type: 'source', position: Position.Bottom, id: WRAPPER_REF_PORT_ID,
+          onContextMenu: e => { e.preventDefault(); e.stopPropagation(); data.onPortContextMenu(id, WRAPPER_REF_PORT_ID); },
+          style: {
+            width: DOT_SIZE, height: DOT_SIZE, borderRadius: '50%',
+            background: (data.connectedPorts && data.connectedPorts.has(id + ':' + WRAPPER_REF_PORT_ID + ':out')) ? WRAPPER_REF_COLOR : PORT_UNCONNECTED_COLOR,
+            border: `2px solid ${PALETTE.common.white}`, boxShadow: '0 0 0 1px rgba(0,0,0,0.25)',
+            pointerEvents: 'all', cursor: 'default', bottom: -1, zIndex: 2,
+          },
+        }),
+        h(Box, {
+          sx: { height: HEADER_H, bgcolor: (data.__typeInfo && data.__typeInfo.color) || 'grey.500', display: 'flex', alignItems: 'center', justifyContent: 'space-between', px: 1, borderTopLeftRadius: '8px', borderTopRightRadius: '8px' },
+        },
+          h(Typography, {
+            variant: 'body2',
+            sx: { color: 'common.white', fontWeight: 'bold', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+          },
+            def.title,
+            data.threadId && [
+              ' (',
+              h(Link, {
+                key: 'tid', component: 'span', color: 'inherit', underline: 'always',
+                className: 'nodrag',
+                onMouseDown: e => e.stopPropagation(),
+                onClick: e => { e.stopPropagation(); data.onOpenPath(id, GENERATED_IMAGES_DIR + data.threadId); },
+                sx: { cursor: 'pointer' },
+              }, data.threadId),
+              ')',
+            ],
+            data.hasError ? ' ⚠' : ''
+          ),
+          h(Box, { sx: { display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 } },
+            // Pre-run check result / waiting reasons — plain strings (not
+            // arrays) so nodePropsEqual's reference check stays cheap.
+            data.__issueText && h(Tooltip, { title: h(Box, { component: 'span', sx: { whiteSpace: 'pre-line' } }, data.__issueText) },
+              h(Box, { 'data-testid': 'node-issue', sx: { color: data.__issueLevel === 'error' ? 'common.white' : colors.yellow[200], display: 'flex' } },
+                h(Icon, { name: data.__issueLevel === 'error' ? 'Error' : 'Warning', size: 16 }))),
+            data.__waitingText && h(Tooltip, { title: h(Box, { component: 'span', sx: { whiteSpace: 'pre-line' } }, data.__waitingText) },
+              h(Box, { 'data-testid': 'node-waiting', sx: { color: 'common.white', display: 'flex' } },
+                h(Icon, { name: 'HourglassEmpty', size: 16 }))),
+            type === 'template' && h(HeaderActionButton, {
+              color: 'info', title: 'View request & response',
+              onClick: () => setDetailOpen(true),
+            }, h(Icon, { name: 'Search', size: 14 })),
+            type === 'template' && h(HeaderActionButton, {
+              color: 'error', disabled: !isRunning,
+              onClick: () => data.onStopNode(id), title: 'Stop',
+            }, h(Icon, { name: 'Stop', size: 14 })),
+            type === 'template' && h(HeaderActionButton, {
+              color: 'primary', disabled: !canRetry,
+              onClick: () => data.onRetryNode(id), title: 'Retry',
+            }, h(Icon, { name: 'Replay', size: 14 })),
+            h(HeaderActionButton, {
+              color: 'error',
+              onClick: () => data.onDelete(id), title: 'Delete',
+            }, h(Icon, { name: 'Close', size: 14 }))
+          )
+        ),
+        h(Box, { sx: { px: 0 } }, rows),
+        h(Box, {
+          sx: {
+            p: 1, display: 'flex', flexDirection: 'column',
+            // Fixed, state-driven height (never CSS 'auto') — letting box
+            // size passively track DOM content meant a batch of
+            // near-simultaneous content changes (many nodes finishing at
+            // once) could outrun React Flow's own ResizeObserver and
+            // permanently strand some node's edges with no path to draw.
+            // Height only ever changes via the resize-drag handle; the body
+            // itself scrolls (overflow: auto below) if its content overflows.
+            height: gridAlignedBodyHeight(data.__bodyHeight, maxRows),
+            overflow: 'auto',
+          },
+        }, body),
+        // Always mounted at a fixed height (only the bar itself toggles)
+        // for the same reason as the body box above — popping this in/out
+        // on runStatus changes was its own way for height to change
+        // unexpectedly during a batch run.
+        h(Box, { sx: { height: 4, borderRadius: 1, mx: 1, mb: `${NODE_FOOTER_H - 4}px` } },
+          data.runStatus === 'running' && h(LinearProgress, { sx: { height: 4, borderRadius: 1 } })),
+        makeResizeHandles(rowsBottom).map(rh => h(Box, {
+          key: rh.dir,
+          className: 'nodrag nopan',
+          onMouseDown: e => {
+            e.stopPropagation();
+            data.onResizeStart(e, id, rh.dir, gridAlignedBodyHeight(data.__bodyHeight, maxRows));
+          },
+          sx: { position: 'absolute', cursor: rh.cursor, ...rh.sx },
+        }))
+      );
+      return h(React.Fragment, null,
+        cardEl,
+        type === 'template' && h(NodeDetailDialog, { open: detailOpen, node, onClose: () => setDetailOpen(false) })
+      );
+    }
+
+    // rfNodes builds a new `data` each render; comparing its keys by reference lets
+    // React.memo skip nodes whose values didn't change (e.g. while dragging another).
+    function nodePropsEqual(prev, next) {
+      // Position isn't a prop here — React Flow moves the wrapper element
+      // itself via CSS transform, outside AppNode's render.
+      if (prev.id !== next.id || prev.type !== next.type || prev.selected !== next.selected) return false;
+      const pd = prev.data, nd = next.data;
+      const pk = Object.keys(pd), nk = Object.keys(nd);
+      if (pk.length !== nk.length) return false;
+      return pk.every(k => pd[k] === nd[k]);
+    }
+    const MemoizedAppNode = React.memo(AppNode, nodePropsEqual);
+
+    // One React Flow type for every node (node types are only known at run time,
+    // from the server). Module scope, so the reference identity never changes.
+    const NODE_TYPES = { app: MemoizedAppNode };
+
+    // Custom edge so a selected connection keeps the "click the red dot to
+    // delete" affordance — React Flow's default edge only offers click-to-select.
+    function AppEdge(props) {
+      const { id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, selected, data, markerEnd, style } = props;
+      const [edgePath, labelX, labelY] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
+      const color = selected ? PALETTE.error.main : (data && data.color) || PALETTE.grey[500];
+      return h(React.Fragment, null,
+        h(BaseEdge, { id, path: edgePath, markerEnd, style: { ...style, stroke: color, strokeWidth: selected ? 3.5 : 2.5 }, interactionWidth: 20 }),
+        selected && h(EdgeLabelRenderer, null,
+          h(IconButton, {
+            className: 'nodrag nopan', 'aria-label': 'Delete connection',
+            onClick: e => { e.stopPropagation(); data.onDelete(id); },
+            sx: {
+              position: 'absolute', transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+              pointerEvents: 'all', width: 18, height: 18, p: 0,
+              bgcolor: 'error.main', color: 'common.white', border: '2px solid', borderColor: 'common.white',
+              '&:hover': { bgcolor: 'error.dark' },
+            },
+          }, h(Icon, { name: 'Close', size: 10 }))
+        )
+      );
+    }
+    function edgePropsEqual(prev, next) {
+      if (prev.selected !== next.selected) return false;
+      if (prev.sourceX !== next.sourceX || prev.sourceY !== next.sourceY) return false;
+      if (prev.targetX !== next.targetX || prev.targetY !== next.targetY) return false;
+      const pd = prev.data, nd = next.data;
+      return pd.color === nd.color && pd.onDelete === nd.onDelete;
+    }
+    const EDGE_TYPES = { appEdge: React.memo(AppEdge, edgePropsEqual) };
+
+    function EnumValuesEditor(props) {
+      const { values, onChange } = props;
+      const list = values && values.length ? values : [''];
+      function updateAt(i, v) { const next = [...list]; next[i] = v; onChange(next); }
+      function removeAt(i) { const next = list.filter((_, idx) => idx !== i); onChange(next.length ? next : ['']); }
+      return h(Box, { sx: { display: 'flex', flexDirection: 'column', gap: 0.75 } },
+        list.map((v, i) => h(Box, { key: i, sx: { display: 'flex', gap: 1, alignItems: 'center' } },
+          h(TextField, { size: 'small', value: v, placeholder: `Option ${i + 1}`, sx: { flex: 1 }, onChange: e => updateAt(i, e.target.value) }),
+          h(IconButton, { size: 'small', color: 'error', onClick: () => removeAt(i) }, h(Icon, { name: 'Close', size: 16 }))
+        )),
+        h(Button, { size: 'small', variant: 'outlined', onClick: () => onChange([...list, '']), sx: { alignSelf: 'flex-start' } }, '+ Add Option')
+      );
+    }
+
+    // Recursive editor for one output schema field. Only depth 0 shows a
+    // "default value" (the only depth that becomes a node widget) and is
+    // removable via the caller's onRemove; nested ones remove themselves.
+    function OutputFieldEditor(props) {
+      const { field, onChange, onRemove, depth } = props;
+      const isEnum = field.valueType === 'enum';
+      const isArray = field.valueType === 'array';
+
+      function updateChild(key, next) {
+        onChange({ ...field, children: field.children.map(c => c.key === key ? next : c) });
+      }
+      function removeChild(key) {
+        onChange({ ...field, children: field.children.filter(c => c.key !== key) });
+      }
+      function addChild() {
+        onChange({ ...field, children: [...field.children, makeOutputField({})] });
+      }
+
+      return h(Paper, {
+        variant: 'outlined',
+        sx: { p: 1.5, ...(isArray ? { borderStyle: 'dashed', borderWidth: 2, bgcolor: arrayFieldShade(depth) } : null) },
+      },
+        h(Box, { sx: { display: 'flex', flexDirection: 'column', gap: 1 } },
+          h(Box, { sx: { display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' } },
+            h(TextField, {
+              size: 'small', variant: 'outlined', label: 'Field name', value: field.name, sx: { minWidth: 160, flex: 1 },
+              onChange: e => onChange({ ...field, name: e.target.value }),
+            }),
+            h(FormControl, { size: 'small', sx: { minWidth: 150 } },
+              h(Select, {
+                value: field.valueType,
+                onChange: e => {
+                  const nextType = e.target.value;
+                  const needsChild = nextType === 'array' && field.children.length === 0;
+                  onChange({ ...field, valueType: nextType, children: needsChild ? [makeOutputField({})] : field.children });
+                },
+              },
+                h(MenuItem, { value: 'string' }, 'string'),
+                h(MenuItem, { value: 'number' }, 'number'),
+                h(MenuItem, { value: 'integer' }, 'integer'),
+                h(MenuItem, { value: 'boolean' }, 'boolean'),
+                h(MenuItem, { value: 'enum' }, 'string (enum)'),
+                h(MenuItem, { value: 'array' }, 'array'),
+              )
+            ),
+            h(Box, { sx: { flexGrow: 1 } }),
+            h(IconButton, { size: 'small', color: 'error', onClick: onRemove }, h(Icon, { name: 'Close', size: 16 }))
+          ),
+          h(TextField, {
+            size: 'small', variant: 'outlined', label: 'Description', value: field.description, fullWidth: true,
+            multiline: true, minRows: 2, maxRows: 8,
+            onChange: e => onChange({ ...field, description: e.target.value }),
+          }),
+          isEnum && h(EnumValuesEditor, { values: field.enumValues, onChange: next => onChange({ ...field, enumValues: next }) }),
+          isArray && h(Box, { sx: { display: 'flex', flexDirection: 'column', gap: 1, pl: 2, borderLeft: '2px solid', borderColor: 'divider' } },
+            field.children.map(child => h(OutputFieldEditor, {
+              key: child.key, field: child, depth: depth + 1,
+              onChange: next => updateChild(child.key, next),
+              onRemove: () => removeChild(child.key),
+            })),
+            h(Button, { size: 'small', variant: 'outlined', onClick: addChild, sx: { alignSelf: 'flex-start' } }, '+ Add Nested Field')
+          )
+        )
+      );
+    }
+
+    function TemplateManagerDialog(props) {
+      const { open, editTarget, onClose, onSave } = props;
+      const [draft, setDraft] = useState(blankDraft);
+
+      useEffect(() => {
+        if (!open) return;
+        if (editTarget) {
+          const outputs = (editTarget.outputs || []).length ? editTarget.outputs.map(normalizeOutputField) : [makeOutputField({})];
+          setDraft({ id: editTarget.id, name: editTarget.name, content: editTarget.content, outputs });
+        } else {
+          setDraft(blankDraft());
+        }
+      }, [open, editTarget]);
+
+      const paramPreview = useMemo(() => extractPlaceholders(draft.content), [draft.content]);
+
+      async function handleSave() {
+        if (!draft.name.trim() || !draft.content.trim()) return;
+        const saved = await onSave({ ...draft, outputs: draft.outputs.filter(o => o.name.trim()) });
+        if (!saved) return;
+        setDraft(blankDraft());
+      }
+      function addOutputField() {
+        setDraft(d => ({ ...d, outputs: [...d.outputs, makeOutputField({})] }));
+      }
+      function updateOutputField(key, next) {
+        setDraft(d => ({ ...d, outputs: d.outputs.map(f => f.key === key ? next : f) }));
+      }
+      function removeOutputField(key) {
+        setDraft(d => ({ ...d, outputs: d.outputs.filter(f => f.key !== key) }));
+      }
+
+      return h(Dialog, { open, onClose, fullWidth: true, maxWidth: 'xl' },
+        h(DialogTitle, null, draft.id ? 'Edit AI Node' : 'Create AI Node'),
+        h(DialogContent, { sx: { display: 'flex', gap: 3, pt: '20px !important' } },
+          h(Box, { sx: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 } },
+            h(TextField, {
+              variant: 'outlined', label: 'Node name', size: 'small', fullWidth: true, value: draft.name,
+              onChange: e => setDraft(d => ({ ...d, name: e.target.value })),
+            }),
+            h(TextField, {
+              variant: 'outlined', label: 'Content (prompt)', size: 'small', fullWidth: true, multiline: true, minRows: 14, maxRows: 24,
+              value: draft.content,
+              onChange: e => setDraft(d => ({ ...d, content: e.target.value })),
+              helperText: 'Parameter syntax: {string}  <number>  [option1,option2]  (use "#" for a default, e.g. <count#3>)',
+            }),
+            paramPreview.length > 0 && h(Box, { sx: { display: 'flex', flexWrap: 'wrap', gap: 0.5 } },
+              paramPreview.map(p => h(Chip, { key: p.key, size: 'small', label: `${p.name} (${p.kind})` }))
+            )
+          ),
+          h(Divider, { orientation: 'vertical', flexItem: true }),
+          h(Box, { sx: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1.5 } },
+            h(Typography, { variant: 'subtitle2' }, 'Output Schema'),
+            h(Typography, { variant: 'caption', color: 'text.secondary' },
+              "Each top-level field becomes a named, read-only output port on the node, filled in from Codex's actual response once the node runs. Use \"array\" to nest fields describing each item's shape — this defines the JSON Schema the Structured Output call uses."),
+            h(Box, { sx: { display: 'flex', flexDirection: 'column', gap: 1.5 } },
+              draft.outputs.map(f => h(OutputFieldEditor, {
+                key: f.key, field: f, depth: 0,
+                onChange: next => updateOutputField(f.key, next),
+                onRemove: () => removeOutputField(f.key),
+              })),
+              h(Button, { size: 'small', variant: 'outlined', onClick: addOutputField, sx: { alignSelf: 'flex-start' } }, '+ Add Output Field')
+            )
+          )
+        ),
+        h(DialogActions, null,
+          draft.id && h(Button, { size: 'small', onClick: () => setDraft(blankDraft()) }, 'Switch to New Node'),
+          h(Button, { onClick: onClose }, 'Close'),
+          h(Button, { variant: 'contained', onClick: handleSave, disabled: !draft.name.trim() || !draft.content.trim() },
+            draft.id ? 'Save changes' : 'Save Node')
+        )
+      );
+    }
+
+    // Replaces window.confirm() for anything destructive, to match the
+    // rest of the MUI interface.
+    function ConfirmDialog(props) {
+      const { open, message, confirmLabel, confirmColor, onConfirm, onCancel } = props;
+      return h(Dialog, { open, onClose: onCancel, maxWidth: 'xs', fullWidth: true },
+        h(DialogContent, { sx: { pt: 3 } }, h(Typography, { variant: 'body2' }, message)),
+        h(DialogActions, null,
+          h(Button, { onClick: onCancel }, 'Cancel'),
+          h(Button, { variant: 'contained', color: confirmColor || 'error', onClick: onConfirm, autoFocus: true }, confirmLabel || 'Delete')
+        )
+      );
+    }
+
+    // validate_workflow results (common.py, via POST /evaluate), split into format (schema) and
+    // wiring (graph) sections. Opens from the toolbar chip, or by itself
+    // when Run is blocked by errors.
+    function IssuesDialog(props) {
+      const { open, issues, runBlocked, onClose, onFocusNode, onRemoveEdge } = props;
+      const errorCount = issues.filter(i => i.level === 'error').length;
+      const byLevel = list => [...list.filter(i => i.level === 'error'), ...list.filter(i => i.level !== 'error')];
+      const section = (title, list) => list.length > 0 && h(Box, { key: title, sx: { mb: 2 } },
+        h(Typography, { variant: 'overline', color: 'text.secondary' }, `${title} (${list.length})`),
+        byLevel(list).map((issue, i) => h(Box, {
+          key: i, 'data-testid': 'issue-row',
+          sx: { display: 'flex', gap: 1, alignItems: 'flex-start', py: 0.75, borderBottom: '1px solid', borderColor: 'divider' },
+        },
+          h(Box, { sx: { color: issue.level === 'error' ? 'error.main' : 'warning.main', pt: '2px' } },
+            h(Icon, { name: issue.level === 'error' ? 'Error' : 'Warning', size: 18 })),
+          h(Typography, { variant: 'body2', sx: { flex: 1, minWidth: 0, wordBreak: 'break-word' } }, issue.message),
+          issue.nodeId && h(Button, { size: 'small', onClick: () => onFocusNode(issue.nodeId) }, 'Show'),
+          issue.fix === 'removeEdge' && h(Button, { size: 'small', color: 'error', onClick: () => onRemoveEdge(issue.edgeId) }, 'Remove Wire')
+        ))
+      );
+      return h(Dialog, { open, onClose, maxWidth: 'md', fullWidth: true },
+        h(DialogTitle, null, 'Pre-Run Check'),
+        h(DialogContent, { dividers: true },
+          runBlocked && errorCount > 0 && h(Alert, { severity: 'error', sx: { mb: 1.5 } }, `Run blocked — fix ${errorCount} error(s) first.`),
+          issues.length === 0 && h(Typography, { variant: 'body2', color: 'text.secondary' }, 'No problems found.'),
+          section('Format', issues.filter(i => i.kind === 'schema')),
+          section('Wiring', issues.filter(i => i.kind === 'graph'))
+        ),
+        h(DialogActions, null, h(Button, { onClick: onClose }, 'Close'))
+      );
+    }
+
+    const RUN_LOG_COLORS = { info: 'text.primary', success: 'success.main', warning: 'warning.dark', error: 'error.main' };
+
+    // Floating run-event log over the canvas (FlowApp's logEvent feeds it).
+    function RunHistoryPanel(props) {
+      const { log, onFocusNode, onClear, onClose } = props;
+      const listRef = useRef(null);
+      // Follow the newest entry.
+      useEffect(() => { if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight; }, [log.length]);
+      const pad = (v, n = 2) => String(v).padStart(n, '0');
+      const time = at => { const d = new Date(at); return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`; };
+      return h(Paper, {
+        elevation: 6, 'data-testid': 'run-history',
+        sx: { position: 'absolute', left: 16, bottom: 16, width: 560, maxWidth: 'calc(100% - 32px)', height: 300, zIndex: 5, display: 'flex', flexDirection: 'column' },
+      },
+        h(Box, { sx: { display: 'flex', alignItems: 'center', px: 1.5, py: 0.5, borderBottom: '1px solid', borderColor: 'divider' } },
+          h(Typography, { variant: 'subtitle2', sx: { flex: 1 } }, `Run History (${log.length})`),
+          h(Button, { size: 'small', onClick: onClear, disabled: !log.length }, 'Clear'),
+          h(IconButton, { size: 'small', 'aria-label': 'Close run history', onClick: onClose }, h(Icon, { name: 'Close', size: 16 }))
+        ),
+        h(Box, { ref: listRef, sx: { flex: 1, overflowY: 'auto', px: 1.5, py: 0.5, fontFamily: 'monospace', fontSize: 12 } },
+          log.length === 0 && h(Typography, { variant: 'caption', color: 'text.secondary' }, 'Nothing yet — events appear here during a run.'),
+          log.map(entry => h(Box, { key: entry.seq, 'data-testid': 'run-log-row', sx: { display: 'flex', gap: 1, py: '1px', color: RUN_LOG_COLORS[entry.level] } },
+            h(Box, { component: 'span', sx: { color: 'text.secondary', flexShrink: 0 } }, `#${entry.run} ${time(entry.at)}`),
+            entry.nodeId
+              ? h(Box, {
+                  component: 'span', onClick: () => onFocusNode(entry.nodeId),
+                  sx: { flexShrink: 0, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer', textDecoration: 'underline' },
+                }, `${entry.title} (${entry.nodeId})`)
+              : h(Box, { component: 'span', sx: { flexShrink: 0, fontWeight: 'bold' } }, 'Workflow'),
+            h(Box, { component: 'span', sx: { wordBreak: 'break-word' } }, entry.message)
+          ))
+        )
+      );
+    }
+
+    function SaveWorkflowDialog(props) {
+      const { open, defaultName, onClose, onSave } = props;
+      const [name, setName] = useState('');
+
+      useEffect(() => { if (open) setName(defaultName || ''); }, [open, defaultName]);
+
+      return h(Dialog, { open, onClose, fullWidth: true, maxWidth: 'xs' },
+        h(DialogTitle, null, 'Save Workflow'),
+        h(DialogContent, null,
+          h(TextField, {
+            autoFocus: true, variant: 'outlined', label: 'Workflow name', size: 'small', fullWidth: true, value: name,
+            onChange: e => setName(e.target.value), sx: { mt: 1 },
+          })
+        ),
+        h(DialogActions, null,
+          h(Button, { onClick: onClose }, 'Cancel'),
+          h(Button, { variant: 'contained', disabled: !name.trim(), onClick: () => onSave(name.trim()) }, 'Save')
+        )
+      );
+    }
+
+    // Wrapper's Max retries: a number field whose step below 0 is ∞ (UNLIMITED_RETRIES);
+    // ↑/↓ keys and the ▲/▼ buttons step, "∞" or a negative number typed means ∞.
+    function RetriesField({ value, disabled, onChange }) {
+      const unlimited = value === UNLIMITED_RETRIES;
+      const step = d => onChange(Math.max(UNLIMITED_RETRIES, (unlimited ? -1 : value) + d));
+      // Digits typed next to "∞" replace it; "-…" or a lone "∞" means ∞; empty means 0.
+      const parse = text => {
+        if (/^\s*-/.test(text)) return UNLIMITED_RETRIES;
+        const digits = text.replace(/[^0-9]/g, '');
+        return digits ? parseInt(digits, 10) : (text.includes('∞') ? UNLIMITED_RETRIES : 0);
+      };
+      const arrow = (label, d) => h(IconButton, {
+        size: 'small', disabled, tabIndex: -1, sx: { p: 0, fontSize: 10, lineHeight: 1 }, onClick: () => step(d),
+      }, label);
+      return h(TextField, {
+        label: 'Max retries', size: 'small', fullWidth: true, variant: 'outlined', disabled,
+        value: unlimited ? '∞' : String(value),
+        inputProps: { inputMode: 'numeric', 'data-testid': 'max-retries' },
+        onChange: e => onChange(parse(e.target.value)),
+        onKeyDown: e => {
+          if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); step(e.key === 'ArrowUp' ? 1 : -1); }
+        },
+        InputProps: {
+          endAdornment: h(InputAdornment, { position: 'end' },
+            h(Box, { sx: { display: 'flex', flexDirection: 'column' } }, arrow('▲', 1), arrow('▼', -1))),
+        },
+        helperText: unlimited ? 'Retries until the conditions pass (or Stop)' : undefined,
+      });
+    }
+
+    // Add-node menu: one button per node type.
+    function NodeTypeButtons({ types, color, onAdd }) {
+      return h(Box, { sx: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 } },
+        types.map(t => h(Button, {
+          key: t.type, size: 'small', variant: 'outlined', fullWidth: true,
+          sx: { color, borderColor: color }, onClick: () => onAdd(t.type),
+        }, t.title))
+      );
+    }
+
+    function FlowApp() {
+      const [nodes, setNodes] = useState({});
+      const [edges, setEdges] = useState([]);
+      const [selection, setSelection] = useState(null);
+      // Right-side panel for the selected node. editPanelClosed (X button) resets when
+      // the selection moves to another node — done during render, the React pattern
+      // for state derived from a changing input, so no stale frame commits.
+      const [editPanelClosed, setEditPanelClosed] = useState(false);
+      const selectedNodeId = (selection && selection.type === 'node') ? selection.id : null;
+      const prevSelectedNodeIdForPanelRef = useRef(selectedNodeId);
+      if (prevSelectedNodeIdForPanelRef.current !== selectedNodeId) {
+        prevSelectedNodeIdForPanelRef.current = selectedNodeId;
+        if (editPanelClosed) setEditPanelClosed(false);
+      }
+      const editingNode = (selectedNodeId && !editPanelClosed) ? nodes[selectedNodeId] : null;
+      const [templates, setTemplates] = useState([]);
+      const [templatesError, setTemplatesError] = useState(null);
+      const [templateManagerOpen, setTemplateManagerOpen] = useState(false);
+      const [editTarget, setEditTarget] = useState(null);
+      const [isRunningWorkflow, setIsRunningWorkflow] = useState(false);
+      const [currentWorkflowId, setCurrentWorkflowId] = useState(null);
+      const [currentWorkflowName, setCurrentWorkflowName] = useState('');
+      const [saveWorkflowOpen, setSaveWorkflowOpen] = useState(false);
+      const [workflows, setWorkflows] = useState([]);
+      const [workflowsError, setWorkflowsError] = useState(null);
+      const [confirmState, setConfirmState] = useState(null);
+      // Pre-run check dialog: null (closed) or { runBlocked }.
+      const [issuesDialog, setIssuesDialog] = useState(null);
+      const [runLog, setRunLog] = useState([]);
+      const [historyOpen, setHistoryOpen] = useState(false);
+      // Node/workflow menu: hidden behind the canvas "+" button until opened.
+      const [menuOpen, setMenuOpen] = useState(false);
+      // Hourglass waiting reasons only once a run has started — an idle,
+      // never-run graph stays neutral (same rule as the card border's run state).
+      const [showWaiting, setShowWaiting] = useState(false);
+      // GET /node-types: the type list (menu order) and files that failed to load.
+      const [nodeTypeList, setNodeTypeList] = useState([]);
+      const [nodeTypeErrors, setNodeTypeErrors] = useState([]);
+      const typesByType = useMemo(() => Object.fromEntries(nodeTypeList.map(t => [t.type, t])), [nodeTypeList]);
+      // 'connecting' until the first answer, 'down' while api_server.py is unreachable
+      // (the canvas is covered and can't be edited), else 'ok'.
+      const [serverState, setServerState] = useState('connecting');
+      // POST /evaluate's latest answer (common.py editor_view).
+      const [view, setView] = useState({ nodes: {}, issues: [], connected: [] });
+      // A server run is alive (also while only its Delays are left) — the Stop button.
+      const [runLive, setRunLive] = useState(false);
+      function askConfirm(message, action, opts) {
+        setConfirmState({ message, action, confirmLabel: opts && opts.confirmLabel, confirmColor: opts && opts.confirmColor });
+      }
+
+      // Bottom-center error toast for failures with no natural inline spot
+      // (e.g. opening a thread-id folder that doesn't exist yet).
+      const [toast, setToast] = useState(null);
+      const notify = msg => setToast(msg);
+
+      // Created Nodes are stored server-side as JSON files (api_server.py /nodes).
+      function loadTemplates() {
+        fetchNodeList()
+          .then(data => { setTemplates(data.nodes || []); setTemplatesError(null); })
+          .catch(e => setTemplatesError(`Could not load AI nodes — is api_server.py running on ${CODEX_API_BASE}? (${e.message || e})`));
+      }
+      // Node types first; retried until api_server.py answers. The menu's lists load
+      // each time the server comes (back) up.
+      useEffect(() => {
+        let timer = null;
+        let cancelled = false;
+        function load() {
+          fetchNodeTypes()
+            .then(body => {
+              if (cancelled) return;
+              setNodeTypeList(body.types || []);
+              setNodeTypeErrors(body.errors || []);
+              setServerState('ok');
+            })
+            .catch(() => {
+              if (cancelled) return;
+              setServerState('down');
+              timer = setTimeout(load, SERVER_RETRY_MS);
+            });
+        }
+        load();
+        return () => { cancelled = true; clearTimeout(timer); };
+      }, []);
+      useEffect(() => {
+        if (serverState !== 'ok') return;
+        loadTemplates();
+        loadWorkflowList();
+      }, [serverState]);
+      // Keeps each Created Node's definition fields (name/content/outputs) in step
+      // with its palette template (data.templateId); run state is untouched. A node
+      // without templateId matches by title only when exactly one template has that
+      // name. A function, not just an effect: loadWorkflow calls it too, since
+      // loading replaces `nodes` without `templates` changing.
+      function syncTemplateNodesWithCatalog(templatesList) {
+        if (!templatesList.length) return;
+        const byId = {};
+        const nameCounts = {};
+        templatesList.forEach(t => { byId[t.id] = t; nameCounts[t.name] = (nameCounts[t.name] || 0) + 1; });
+        const byUniqueName = {};
+        templatesList.forEach(t => { if (nameCounts[t.name] === 1) byUniqueName[t.name] = t; });
+
+        setNodes(prev => {
+          let changed = false;
+          const next = { ...prev };
+          Object.values(prev).forEach(node => {
+            if (node.type !== 'template') return;
+            const template = (node.data.templateId && byId[node.data.templateId])
+              || (!node.data.templateId ? byUniqueName[node.data.title] : null);
+            if (!template) return;
+            const outputs = (template.outputs || []).map(normalizeOutputField);
+            const inSync = node.data.templateId === template.id && node.data.title === template.name
+              && node.data.content === template.content
+              && JSON.stringify(outputs) === JSON.stringify(node.data.outputs);
+            if (inSync) return;
+            changed = true;
+            next[node.id] = {
+              ...node,
+              data: { ...node.data, templateId: template.id, title: template.name, content: template.content, outputs },
+            };
+          });
+          return changed ? next : prev;
+        });
+      }
+      useEffect(() => { syncTemplateNodesWithCatalog(templates); }, [templates]);
+
+      // Dragging/panning/zooming/connection-dragging are all handled by
+      // React Flow — screenToFlowPosition() converts a screen point to
+      // flow coordinates (resize dragging, placing a new node at center).
+      const rfInstance = useReactFlow();
+      const updateNodeInternals = useUpdateNodeInternals();
+      const paneWrapRef = useRef(null);
+      const nodeIdRef = useRef(1);
+      const edgeIdRef = useRef(1);
+      const zCounterRef = useRef(1);
+      // Only the hand-rolled resize-handle drag still needs a persistent
+      // window listener pair (React Flow's own NodeResizer would steal
+      // the west/east ports' hit area — see PortHandle/makeResizeHandles).
+      const interactionRef = useRef({ mode: null });
+      // Kept fresh so async callers (the run client starting a run, log
+      // entries resolving a node's title) always read each node's latest
+      // data instead of the stale snapshot from render start.
+      const nodesRef = useRef(nodes);
+      const edgesRef = useRef(edges);
+      // Latest server view / type list, for callbacks (log titles) that outlive a render.
+      const viewRef = useRef(view);
+      viewRef.current = view;
+      const typesByTypeRef = useRef(typesByType);
+      typesByTypeRef.current = typesByType;
+      // React Flow drags fire 'position' on every pointermove, uncapped —
+      // coalesce to one setNodes commit per frame, like flush() below.
+      const pendingPositionsRef = useRef(new Map());
+      const positionRafRef = useRef(null);
+
+      const logSeqRef = useRef(0);   // unique React key per log entry
+      // nodeId null = workflow-level event. level: info|success|warning|error.
+      const logEvent = useCallback((nodeId, message, level = 'info') => {
+        // Title captured now — the node may be gone/renamed by the time the log is read.
+        const node = nodeId && nodesRef.current[nodeId];
+        const nodeView = nodeId && viewRef.current.nodes[nodeId];
+        const title = nodeView ? nodeView.title : node ? ((typesByTypeRef.current[node.type] || {}).title || node.type) : nodeId;
+        const run = runnerRef.current ? runnerRef.current.activeRun.id : 0;
+        const entry = { seq: ++logSeqRef.current, at: Date.now(), run, nodeId, title, message, level };
+        setRunLog(prev => (prev.length >= RUN_LOG_MAX ? prev.slice(prev.length - RUN_LOG_MAX + 1) : prev).concat(entry));
+      }, []);
+
+      useEffect(() => { nodesRef.current = nodes; }, [nodes]);
+      useEffect(() => { edgesRef.current = edges; }, [edges]);
+
+      // Belt-and-suspenders: force React Flow to re-measure every node's
+      // handle positions (not just the one dragged/resized) once an
+      // interaction ends. On a large graph, the rapid re-render stream a
+      // drag produces has been observed to strand some OTHER untouched
+      // node's handleBounds; this is cheap since it only runs once per
+      // interaction, not per frame.
+      const resyncAllNodeInternals = useCallback(() => {
+        updateNodeInternals(Object.keys(nodesRef.current));
+      }, [updateNodeInternals]);
+
+      useEffect(() => {
+        // Coalesce a raw mousemove stream (can exceed 60/s) to one commit
+        // per animation frame — calling setNodes on every event outran
+        // React Flow's node lookup and dropped nodes from the canvas
+        // mid-drag (underlying state stayed intact; reopening recovered it).
+        let rafId = null;
+        let pending = null;
+        function flush() {
+          rafId = null;
+          if (!pending) return;
+          const { id, width, bodyHeight, x, y } = pending;
+          pending = null;
+          setNodes(prev => prev[id] ? { ...prev, [id]: { ...prev[id], width, bodyHeight, x, y } } : prev);
+          // React Flow's own ResizeObserver can drop a notification under
+          // this drag's rapid-fire churn — force a synchronous re-measure
+          // instead of hoping it catches up, since we already know the new size.
+          updateNodeInternals(id);
+        }
+        function onMove(e) {
+          const it = interactionRef.current;
+          if (it.mode !== 'resizeNode') return;
+          // Mouse released outside a place this window sees mouseup (past
+          // the taskbar, focus lost) would otherwise strand the
+          // interaction in resizeNode mode forever — bail once the
+          // primary button reads as no longer held.
+          if (!(e.buttons & 1)) { onUp(); return; }
+          const w = rfInstance.screenToFlowPosition({ x: e.clientX, y: e.clientY });
+          const dx = w.x - it.startWorldX, dy = w.y - it.startWorldY;
+          const dir = it.dir;
+          let width = it.startWidth, x = it.startX;
+          let bodyHeight = it.startBodyHeight, y = it.startY;
+          if (dir.includes('e')) {
+            width = Math.max(MIN_NODE_WIDTH, snapToGrid(it.startWidth + dx));
+          } else if (dir.includes('w')) {
+            width = Math.max(MIN_NODE_WIDTH, snapToGrid(it.startWidth - dx));
+            x = it.startX + (it.startWidth - width);
+          }
+          // Snap the delta, not the body: the start height is already
+          // grid-aligned as a whole card (gridAlignedBodyHeight), so whole
+          // grid steps keep it aligned. minDelta = largest shrink above MIN_BODY_HEIGHT.
+          const minDelta = -Math.floor((it.startBodyHeight - MIN_BODY_HEIGHT) / GRID_SIZE) * GRID_SIZE;
+          if (dir.includes('s')) {
+            bodyHeight = it.startBodyHeight + Math.max(minDelta, snapToGrid(dy));
+          } else if (dir.includes('n')) {
+            const d = Math.max(minDelta, snapToGrid(-dy));
+            bodyHeight = it.startBodyHeight + d;
+            y = it.startY - d;
+          }
+          pending = { id: it.id, width, bodyHeight, x, y };
+          if (rafId === null) rafId = requestAnimationFrame(flush);
+        }
+        function onUp() {
+          interactionRef.current = { mode: null };
+          if (rafId !== null) { cancelAnimationFrame(rafId); }
+          flush();
+          resyncAllNodeInternals();
+        }
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+        // Covers focus leaving the window mid-drag with no further mouse event at all.
+        window.addEventListener('blur', onUp);
+        return () => {
+          window.removeEventListener('mousemove', onMove);
+          window.removeEventListener('mouseup', onUp);
+          window.removeEventListener('blur', onUp);
+          if (rafId !== null) cancelAnimationFrame(rafId);
+        };
+      }, [rfInstance, updateNodeInternals, resyncAllNodeInternals]);
+
+      // Delete key — React Flow's own deleteKeyCode is off (see <ReactFlow>
+      // props) so this is the one place deletion happens, guarding against
+      // eating a Backspace meant for a focused text field.
+      useEffect(() => {
+        function onKey(e) {
+          if (serverState !== 'ok') return;
+          if ((e.key === 'Delete' || e.key === 'Backspace') && selection) {
+            const active = document.activeElement;
+            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+            if (selection.type === 'node') deleteNode(selection.id);
+            else deleteEdge(selection.id);
+            setSelection(null);
+          }
+        }
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+      }, [selection, nodes, edges, serverState]);
+
+      function centerFlowPoint() {
+        const rect = paneWrapRef.current.getBoundingClientRect();
+        const jitter = () => Math.random() * 60 - 30;
+        return rfInstance.screenToFlowPosition({ x: rect.left + rect.width / 2 + jitter(), y: rect.top + rect.height / 2 + jitter() });
+      }
+
+      function addNode(type) {
+        const info = typesByType[type];
+        const id = 'n' + (nodeIdRef.current++);
+        const c = centerFlowPoint();
+        setNodes(prev => ({ ...prev, [id]: { id, type, x: snapToGrid(c.x - NODE_WIDTH / 2), y: snapToGrid(c.y - 40), z: ++zCounterRef.current, bodyHeight: info.defaultBodyHeight, data: JSON.parse(JSON.stringify(info.defaultData || {})) } }));
+        setSelection({ type: 'node', id });
+      }
+
+      function addTemplateNode(template) {
+        const id = 'n' + (nodeIdRef.current++);
+        const paramDefs = extractPlaceholders(template.content);
+        const values = {};
+        paramDefs.forEach(p => { values[p.key] = p.defaultValue; });
+        const outputs = (template.outputs || []).map(normalizeOutputField);
+        const outputValues = {};
+        outputs.forEach(o => { outputValues[o.key] = ''; });
+        const c = centerFlowPoint();
+        setNodes(prev => ({
+          ...prev,
+          [id]: {
+            id, type: 'template', x: snapToGrid(c.x - NODE_WIDTH / 2), y: snapToGrid(c.y - 40), z: ++zCounterRef.current,
+            bodyHeight: TEMPLATE_DEFAULT_BODY_HEIGHT,
+            data: { templateId: template.id, title: template.name, content: template.content, values, outputs, outputValues },
+          },
+        }));
+        setSelection({ type: 'node', id });
+        setTemplateManagerOpen(false);
+      }
+
+      async function saveTemplate(draft) {
+        const body = { name: draft.name, content: draft.content, outputs: draft.outputs };
+        try {
+          const saved = await saveNodeRequest(draft.id, body);
+          setTemplates(prev => {
+            const exists = prev.some(t => t.id === saved.id);
+            return exists ? prev.map(t => t.id === saved.id ? saved : t) : [...prev, saved];
+          });
+          setTemplatesError(null);
+          return saved;
+        } catch (e) {
+          setTemplatesError(`Failed to save node — is api_server.py running on ${CODEX_API_BASE}? (${e.message || e})`);
+          return null;
+        }
+      }
+
+      function deleteTemplate(id) {
+        askConfirm('Delete this node? (Nodes already placed from it are not affected.)', async () => {
+          try {
+            await deleteNodeRequest(id);
+            setTemplates(prev => prev.filter(t => t.id !== id));
+            setTemplatesError(null);
+          } catch (e) {
+            setTemplatesError(`Failed to delete node — is api_server.py running on ${CODEX_API_BASE}? (${e.message || e})`);
+          }
+        });
+      }
+
+      // After loading a workflow, new nodes/edges must not collide with
+      // its ids — bump the counters past whatever it has.
+      function bumpIdCountersPastLoaded(loadedNodes, loadedEdges) {
+        let maxNode = 0, maxEdge = 0, maxZ = 0;
+        Object.keys(loadedNodes || {}).forEach(id => {
+          const m = /^n(\d+)$/.exec(id);
+          if (m) maxNode = Math.max(maxNode, parseInt(m[1], 10));
+          maxZ = Math.max(maxZ, (loadedNodes[id] && loadedNodes[id].z) || 0);
+        });
+        (loadedEdges || []).forEach(e => {
+          const m = /^e(\d+)$/.exec(e.id);
+          if (m) maxEdge = Math.max(maxEdge, parseInt(m[1], 10));
+        });
+        nodeIdRef.current = Math.max(nodeIdRef.current, maxNode + 1);
+        edgeIdRef.current = Math.max(edgeIdRef.current, maxEdge + 1);
+        zCounterRef.current = Math.max(zCounterRef.current, maxZ + 1);
+      }
+
+      async function saveWorkflow(name) {
+        const { x, y, zoom } = rfInstance.getViewport();
+        const body = { name, nodes, edges, pan: { x, y }, zoom };
+        try {
+          const saved = await saveWorkflowRequest(currentWorkflowId, body);
+          setCurrentWorkflowId(saved.id);
+          setCurrentWorkflowName(saved.name);
+          setSaveWorkflowOpen(false);
+          const entry = { id: saved.id, name: saved.name, node_count: Object.keys(saved.nodes || {}).length };
+          setWorkflows(prev => {
+            const exists = prev.some(w => w.id === entry.id);
+            return exists ? prev.map(w => w.id === entry.id ? entry : w) : [entry, ...prev];
+          });
+          setWorkflowsError(null);
+        } catch (e) {
+          notify(`Failed to save workflow — is api_server.py running on ${CODEX_API_BASE}? (${e.message || e})`);
+        }
+      }
+
+      function loadWorkflowList() {
+        fetchWorkflowList()
+          .then(data => { setWorkflows(data.workflows || []); setWorkflowsError(null); })
+          .catch(e => setWorkflowsError(`Could not load workflows — is api_server.py running on ${CODEX_API_BASE}? (${e.message || e})`));
+      }
+
+      function loadWorkflow(id) {
+        askConfirm('Load this workflow? This replaces everything currently on the canvas.', async () => {
+          try {
+            const wf = await fetchWorkflowById(id);
+            const loadedNodes = migrateLoadedNodes(wf.nodes || {});
+            const loadedEdges = wf.edges || [];
+            // Loading never fires anything by itself — Move/Queue side
+            // effects only ever happen inside runWorkflow.
+            setNodes(loadedNodes);
+            setShowWaiting(false);
+            // See syncTemplateNodesWithCatalog: loading doesn't change `templates`, so the effect won't run.
+            syncTemplateNodesWithCatalog(templates);
+            setEdges(loadedEdges);
+            rfInstance.setViewport({
+              x: wf.pan ? wf.pan.x : 120,
+              y: wf.pan ? wf.pan.y : 80,
+              zoom: typeof wf.zoom === 'number' ? wf.zoom : 1,
+            });
+            bumpIdCountersPastLoaded(loadedNodes, loadedEdges);
+            setCurrentWorkflowId(wf.id);
+            setCurrentWorkflowName(wf.name);
+            setSelection(null);
+          } catch (e) {
+            setWorkflowsError(`Failed to load workflow — is api_server.py running on ${CODEX_API_BASE}? (${e.message || e})`);
+          }
+        }, { confirmLabel: 'Load', confirmColor: 'primary' });
+      }
+
+      function deleteWorkflow(id) {
+        askConfirm('Delete this saved workflow?', async () => {
+          try {
+            await deleteWorkflowRequest(id);
+            setWorkflows(prev => prev.filter(w => w.id !== id));
+            if (currentWorkflowId === id) { setCurrentWorkflowId(null); setCurrentWorkflowName(''); }
+          } catch (e) {
+            setWorkflowsError(`Failed to delete workflow — is api_server.py running on ${CODEX_API_BASE}? (${e.message || e})`);
+          }
+        });
+      }
+
+      // Stable identity (handed to every node as data.onXxx; a new one per render
+      // would re-reconcile every node). Reads state via refs/updaters, so [] deps are safe.
+      const updateData = useCallback((id, patch) => {
+        setNodes(prev => prev[id] ? { ...prev, [id]: { ...prev[id], data: { ...prev[id].data, ...patch } } } : prev);
+      }, []);
+
+      // Runs execute server-side; RunClient (common.js) starts/stops them and
+      // mirrors their progress through this host. Every callback here is stable.
+      const runnerRef = useRef(null);
+      if (!runnerRef.current) {
+        runnerRef.current = new RunClient({
+          getNodes: () => nodesRef.current,
+          getEdges: () => edgesRef.current,
+          updateData,
+          log: (nodeId, message, level) => logEvent(nodeId, message, level),
+          notify: message => setToast(message),
+          onRunningChange: running => { setIsRunningWorkflow(running); if (running) setShowWaiting(true); },
+          onRunBlocked: () => setIssuesDialog({ runBlocked: true }),
+          onLiveChange: live => setRunLive(live),
+        });
+      }
+      const runner = runnerRef.current;
+      const stopNode = useCallback(nodeId => runnerRef.current.stopNode(nodeId), []);
+      const retryNode = useCallback(nodeId => runnerRef.current.retryNode(nodeId), []);
+
+      // A Link node's resolved value is a plain OS path (not a URI) — this
+      // asks api_server.py's /open-path to launch Explorer with it directly.
+      const openInExplorer = useCallback(async (nodeId, path) => {
+        updateData(nodeId, { openError: null });
+        try {
+          await openPathRequest(path);
+        } catch (e) {
+          const message = `${e && e.message ? e.message : e}`;
+          updateData(nodeId, { openError: message });
+          notify(`Failed to open folder: ${message}`);
+        }
+      }, [updateData]);
+
+
+      const deleteNode = useCallback(id => {
+        setNodes(prev => {
+          const n = { ...prev };
+          delete n[id];
+          return n;
+        });
+        // Dropping its edges also drops it from any Group/Wrapper (both derive from Ref edges).
+        setEdges(prev => prev.filter(e => e.from.node !== id && e.to.node !== id));
+      }, []);
+      const deleteEdge = useCallback(id => {
+        setEdges(prev => prev.filter(e => e.id !== id));
+      }, []);
+      const deleteEdgesAtPort = useCallback((nodeId, portId) => {
+        setEdges(prev => prev.filter(e =>
+          !(e.from.node === nodeId && e.from.port === portId) &&
+          !(e.to.node === nodeId && e.to.port === portId)
+        ));
+      }, []);
+
+      const beginResizeNode = useCallback((e, nodeId, dir, renderedBodyHeight) => {
+        if (e.button !== 0) return;
+        setNodes(prev => prev[nodeId] ? { ...prev, [nodeId]: { ...prev[nodeId], z: ++zCounterRef.current } } : prev);
+        setSelection({ type: 'node', id: nodeId });
+        const node = nodesRef.current[nodeId];
+        const w = rfInstance.screenToFlowPosition({ x: e.clientX, y: e.clientY });
+        interactionRef.current = {
+          mode: 'resizeNode', id: nodeId, dir,
+          startWorldX: w.x, startWorldY: w.y,
+          startX: node.x, startY: node.y,
+          startWidth: node.width || NODE_WIDTH,
+          // The rendered (grid-aligned) height, not the stored one it was rounded from.
+          startBodyHeight: renderedBodyHeight,
+        };
+      }, [rfInstance]);
+
+      function clearAll() {
+        askConfirm('Delete all nodes and connections?', () => {
+          setNodes({}); setEdges([]); setSelection(null);
+          setCurrentWorkflowId(null); setCurrentWorkflowName('');
+          setShowWaiting(false);
+        }, { confirmLabel: 'Clear All' });
+      }
+
+      // Clears every node's run results (each type's reset patch), leaving inputs alone.
+      function resetResults() {
+        askConfirm('Clear every node’s run results (AI Node output, Gate/Queue/Move/Wrapper status)? Inputs and wiring are left untouched.', () => {
+          setNodes(prev => applyResetToNodes(prev, typesByType));
+          setShowWaiting(false);
+        }, { confirmLabel: 'Reset Results', confirmColor: 'primary' });
+      }
+
+
+      // Re-evaluates (POST /evaluate) EVALUATE_DELAY_MS after a change to any node's
+      // type/data or the wiring — never for moves/resizes, which keep `data` as is.
+      // Reads the refs when the timer fires, so it always sends the latest canvas;
+      // an answer overtaken by a newer request is dropped. A failure marks the server
+      // down and retries.
+      const evalInputRef = useRef(null);
+      const evalTimerRef = useRef(null);
+      const evalSeqRef = useRef(0);
+      const [evalRetry, setEvalRetry] = useState(0);
+      useEffect(() => {
+        if (!nodeTypeList.length) return;
+        const list = Object.values(nodes);
+        const input = { ids: list.map(n => n.id + ':' + n.type), datas: list.map(n => n.data), edges, running: isRunningWorkflow, runState: runner.runState, evalRetry };
+        const prev = evalInputRef.current;
+        if (prev && prev.edges === input.edges && prev.running === input.running && prev.runState === input.runState
+            && prev.evalRetry === input.evalRetry && prev.ids.length === input.ids.length
+            && input.ids.every((id, i) => id === prev.ids[i] && input.datas[i] === prev.datas[i])) return;
+        evalInputRef.current = input;
+        clearTimeout(evalTimerRef.current);
+        evalTimerRef.current = setTimeout(async () => {
+          const seq = ++evalSeqRef.current;
+          try {
+            const res = await evaluateRequest(nodesRef.current, edgesRef.current, runnerRef.current.isRunning, runnerRef.current.runState);
+            if (seq !== evalSeqRef.current) return;
+            // Keep each unchanged node's view object, so its memoized card skips re-rendering.
+            setView(prevView => {
+              const nodesOut = {};
+              Object.keys(res.nodes || {}).forEach(id => {
+                const json = JSON.stringify(res.nodes[id]);
+                const old = prevView.nodes[id];
+                nodesOut[id] = old && old.__json === json ? old : { ...res.nodes[id], __json: json };
+              });
+              return { nodes: nodesOut, issues: res.issues || [], connected: res.connected || [] };
+            });
+            setServerState('ok');
+          } catch (e) {
+            if (seq !== evalSeqRef.current) return;
+            setServerState('down');
+            setTimeout(() => setEvalRetry(n => n + 1), SERVER_RETRY_MS);
+          }
+        }, EVALUATE_DELAY_MS);
+      }, [nodes, edges, isRunningWorkflow, nodeTypeList, evalRetry]);
+      useEffect(() => () => clearTimeout(evalTimerRef.current), []);
+
+      // Live pre-run check (validate_workflow, common.py) for the toolbar chip and
+      // per-node header icon; a run is checked again server-side before it starts.
+      const issues = view.issues;
+      const issueCounts = { error: issues.filter(i => i.level === 'error').length, warning: issues.filter(i => i.level === 'warning').length };
+      const issueByNode = useMemo(() => {
+        const byId = {};
+        issues.forEach(i => {
+          if (!i.nodeId) return;
+          const entry = byId[i.nodeId] || (byId[i.nodeId] = { lines: [], level: 'warning' });
+          entry.lines.push(i.message);
+          if (i.level === 'error') entry.level = 'error';
+        });
+        return byId;
+      }, [issues]);
+
+      // Selects a node and pans to it (issue dialog / run history links).
+      const focusNode = useCallback(id => {
+        const node = nodesRef.current[id];
+        if (!node) return;
+        setSelection({ type: 'node', id });
+        rfInstance.setCenter(node.x + (node.width || NODE_WIDTH) / 2, node.y + HEADER_H * 2, { zoom: rfInstance.getZoom(), duration: 300 });
+      }, [rfInstance]);
+
+      // Port dots take the color of what's wired in (most visible on "any" inputs).
+      // Keyed "nodeId:portId:in"/"...:out" — an input and an output can share an id.
+      // The raw wires right away, plus the server's expansion (each Group member's own port).
+      const connectedPorts = useMemo(() => {
+        const set = new Set(view.connected);
+        edges.forEach(e => {
+          set.add(e.from.node + ':' + e.from.port + ':out');
+          set.add(e.to.node + ':' + e.to.port + ':in');
+        });
+        return set;
+      }, [view.connected, edges]);
+
+      const nodeList = Object.values(nodes).sort((a, b) => (a.z || 0) - (b.z || 0));
+
+      // React Flow nodes/edges derived each render from nodes/edges (the source of
+      // truth); everything needed at render time rides in `data`.
+      const rfNodes = nodeList.map(node => {
+        // Sized via CSS (data.__width/__bodyHeight). initialWidth/Height only make React
+        // Flow show the node (it hides nodes of unknown size) without fighting the CSS.
+        const nodeView = view.nodes[node.id];
+        const typeInfo = typesByType[node.type];
+        const def = nodeView || typeInfo || { inputs: [], outputs: [] };
+        const maxRows = Math.max(def.inputs.length, def.outputs.length, 1);
+        const initialWidth = node.width || NODE_WIDTH;
+        const initialHeight = HEADER_H + maxRows * PORT_ROW_H + (node.bodyHeight || MIN_BODY_HEIGHT) + 16;
+        return {
+          id: node.id,
+          type: 'app',
+          position: { x: node.x, y: node.y },
+          selected: !!(selection && selection.type === 'node' && selection.id === node.id),
+          initialWidth, initialHeight,
+          // rfNodes rebuilds fresh via .map() every render, so React Flow
+          // never sees the "same reference as last render" it needs to
+          // keep a node's handleBounds. Without `measured`, RF discards
+          // them and re-triggers ResizeObserver on every node every
+          // render — under heavy churn (drag, batch run) that storm can
+          // outrun the browser's own ResizeObserver batching and strand
+          // some node's edges with nothing to draw from. Reporting our
+          // already-known size as `measured` keeps RF's existing bounds;
+          // they still only get force-recomputed at the explicit
+          // updateNodeInternals sites above, never as a side effect here.
+          measured: { width: initialWidth, height: initialHeight },
+          data: {
+            ...node.data,
+            __type: node.type,
+            __typeInfo: typeInfo,
+            __view: nodeView,
+            __width: node.width,
+            __bodyHeight: node.bodyHeight,
+            __isRunning: !!(nodeView && nodeView.running),
+            __isPassed: !!(nodeView && nodeView.passed),
+            hasError: !!(nodeView && nodeView.hasError),
+            __issueText: issueByNode[node.id] ? issueByNode[node.id].lines.join('\n') : undefined,
+            __issueLevel: issueByNode[node.id] ? issueByNode[node.id].level : undefined,
+            // Hourglass waiting reasons only once a run has started — an idle,
+            // never-run graph stays neutral.
+            __waitingText: showWaiting && nodeView && nodeView.waiting.length ? nodeView.waiting.join('\n') : undefined,
+            isRunningWorkflow,
+            connectedPorts,
+            onDataChange: updateData,
+            onDelete: deleteNode,
+            onPortContextMenu: deleteEdgesAtPort,
+            onResizeStart: beginResizeNode,
+            onStopNode: stopNode,
+            onRetryNode: retryNode,
+            onOpenPath: openInExplorer,
+          },
+        };
+      });
+
+      const rfEdges = edges.map(edge => {
+        // An edge only exists between two connected ports, so it's always
+        // the "connected" color, same as the ports themselves.
+        const color = PORT_CONNECTED_COLOR;
+        return {
+          id: edge.id, type: 'appEdge',
+          source: edge.from.node, sourceHandle: edge.from.port,
+          target: edge.to.node, targetHandle: edge.to.port,
+          selected: !!(selection && selection.type === 'edge' && selection.id === edge.id),
+          data: { color, onDelete: deleteEdge },
+        };
+      });
+
+      // The selected node's edit form: its type's custom form (core Wrapper), else
+      // its fields from the view; none (no panel) for a type with nothing to edit.
+      const editingView = editingNode ? view.nodes[editingNode.id] : null;
+      const editingType = editingNode ? typesByType[editingNode.type] : null;
+      const editForm = !editingNode ? null
+        : editingType && CUSTOM_EDIT_FORMS[editingType.customForm]
+          ? h(CUSTOM_EDIT_FORMS[editingType.customForm], { key: editingNode.id, node: editingNode, updateData, nodes, edges, isRunningWorkflow })
+          : editingView && editingView.fields.length
+            ? h(FieldsForm, { key: editingNode.id, node: editingNode, fields: editingView.fields, updateData, isRunningWorkflow })
+            : null;
+
+      // Controlled mode: React Flow proposes changes (drag/resize/select/
+      // remove), we apply them to nodes/edges.
+      function flushPendingPositions() {
+        positionRafRef.current = null;
+        const pending = pendingPositionsRef.current;
+        if (pending.size === 0) return;
+        pendingPositionsRef.current = new Map();
+        setNodes(prev => {
+          let next = prev;
+          pending.forEach((pos, id) => {
+            if (next[id]) next = { ...next, [id]: { ...next[id], x: pos.x, y: pos.y } };
+          });
+          return next;
+        });
+      }
+      function onNodesChange(changes) {
+        changes.forEach(change => {
+          if (change.type === 'position' && change.position) {
+            const nx = snapToGrid(change.position.x), ny = snapToGrid(change.position.y);
+            pendingPositionsRef.current.set(change.id, { x: nx, y: ny });
+            // Drag end commits immediately so the final position never
+            // waits on a frame that might not come.
+            if (change.dragging === false) {
+              if (positionRafRef.current !== null) { cancelAnimationFrame(positionRafRef.current); }
+              flushPendingPositions();
+              resyncAllNodeInternals();
+            } else if (positionRafRef.current === null) {
+              positionRafRef.current = requestAnimationFrame(flushPendingPositions);
+            }
+          } else if (change.type === 'select') {
+            if (change.selected) setSelection({ type: 'node', id: change.id });
+            else setSelection(sel => (sel && sel.type === 'node' && sel.id === change.id) ? null : sel);
+          } else if (change.type === 'remove') {
+            deleteNode(change.id);
+          }
+        });
+      }
+      function onEdgesChange(changes) {
+        changes.forEach(change => {
+          if (change.type === 'select') {
+            if (change.selected) setSelection({ type: 'edge', id: change.id });
+            else setSelection(sel => (sel && sel.type === 'edge' && sel.id === change.id) ? null : sel);
+          } else if (change.type === 'remove') {
+            deleteEdge(change.id);
+          }
+        });
+      }
+      // One wire per input port (a new one replaces it), except ports that take
+      // several (portAcceptsMultiple): trigger, Gate's compare/value, Queue's inN.
+      function onConnect(connection) {
+        const { source, sourceHandle, target, targetHandle } = connection;
+        if (!source || !target || source === target) return;
+        const acceptsMultiple = portAcceptsMultiple(nodes[target], targetHandle, typesByType);
+        setEdges(prev => {
+          let filtered = acceptsMultiple
+            ? prev.filter(ed => !(ed.to.node === target && ed.to.port === targetHandle && ed.from.node === source && ed.from.port === sourceHandle))
+            : prev.filter(ed => !(ed.to.node === target && ed.to.port === targetHandle));
+          // A Wrapper's Ref links one node — rewiring it drops the previous link.
+          if (sourceHandle === WRAPPER_REF_PORT_ID) {
+            filtered = filtered.filter(ed => !(ed.from.node === source && ed.from.port === WRAPPER_REF_PORT_ID));
+          }
+          return [...filtered, { id: 'e' + (edgeIdRef.current++), from: { node: source, port: sourceHandle }, to: { node: target, port: targetHandle } }];
+        });
+      }
+
+      return h(Box, { sx: { height: '100vh', display: 'flex', flexDirection: 'column' } },
+        h(AppBar, { position: 'static', color: 'default', elevation: 1 },
+          h(Toolbar, { variant: 'dense', sx: { gap: 1, flexWrap: 'wrap', py: 0.5 } },
+            h(Typography, { variant: 'h6', sx: { mr: 1 } }, 'Telar de Ideas'),
+            currentWorkflowName && h(Typography, { variant: 'body2', color: 'text.secondary', sx: { mr: 1 } }, `— ${currentWorkflowName}`),
+            h(Box, { sx: { flexGrow: 1 } }),
+            h(Tooltip, { title: 'Pre-run check — errors block Run' },
+              h(Chip, {
+                'data-testid': 'issues-chip', size: 'small', clickable: true,
+                color: issueCounts.error ? 'error' : issueCounts.warning ? 'warning' : 'success',
+                variant: issueCounts.error || issueCounts.warning ? 'filled' : 'outlined',
+                label: issueCounts.error || issueCounts.warning
+                  ? `${issueCounts.error} error(s) · ${issueCounts.warning} warning(s)`
+                  : 'No problems',
+                onClick: () => setIssuesDialog({ runBlocked: false }),
+              })
+            ),
+            h(Button, { size: 'small', variant: 'contained', color: 'error', onClick: clearAll }, 'Clear All')
+          )
+        ),
+        h(Box, { sx: { flex: 1, display: 'flex', minHeight: 0, position: 'relative' } },
+          !menuOpen && h(Tooltip, { title: 'Add node / open workflows' },
+            h(Fab, {
+              'data-testid': 'menu-fab', size: 'medium', color: 'primary',
+              sx: { position: 'absolute', top: 16, left: 16, zIndex: 6 },
+              onClick: () => setMenuOpen(true),
+            }, h(Icon, { name: 'Add', size: 24 }))
+          ),
+          // Floats over the canvas (no reflow) so the viewport doesn't jump on open/close.
+          menuOpen && h(Paper, {
+            elevation: 6, 'data-testid': 'node-menu',
+            sx: {
+              position: 'absolute', top: 12, left: 12, width: 360, maxHeight: 'calc(100% - 24px)', zIndex: 6,
+              bgcolor: 'grey.50', p: 1.5, display: 'flex', flexDirection: 'column', gap: 1, overflowY: 'auto',
+            },
+          },
+            h(Box, { sx: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
+              h(Typography, { variant: 'overline', color: 'text.secondary' }, 'Default Node'),
+              h(IconButton, {
+                size: 'small', 'aria-label': 'Close menu',
+                onClick: () => setMenuOpen(false),
+              }, h(Icon, { name: 'Close', size: 16 }))
+            ),
+            // Default Node: the core's types; Plugin Node: node_plugin/ files in file name order.
+            h(NodeTypeButtons, { types: nodeTypeList.filter(t => t.menu && !t.plugin), color: DEFAULT_NODE_COLOR, onAdd: addNode }),
+            h(Divider),
+            h(Typography, { variant: 'overline', color: 'text.secondary' }, 'Plugin Node'),
+            h(NodeTypeButtons, { types: nodeTypeList.filter(t => t.menu && t.plugin), color: PLUGIN_NODE_COLOR, onAdd: addNode }),
+            nodeTypeErrors.map(err => h(Typography, { key: err, variant: 'caption', color: 'error' }, `Node type file failed to load — ${err}`)),
+            h(Divider),
+            h(Typography, { variant: 'overline', color: 'text.secondary' }, 'AI Node'),
+            templatesError && h(Typography, { variant: 'caption', color: 'error' }, templatesError),
+            (!templatesError && templates.length === 0)
+              ? h(Typography, { variant: 'caption', color: 'text.secondary' }, 'No AI nodes yet.')
+              : h(Box, { sx: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.5 } },
+                  templates.map(t => h(Box, { key: t.id, sx: { display: 'flex', alignItems: 'center', gap: 0.25, minWidth: 0 } },
+                    h(Button, {
+                      size: 'small', variant: 'outlined',
+                      sx: { color: TEMPLATE_COLOR, borderColor: TEMPLATE_COLOR, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' },
+                      onClick: () => addTemplateNode(t),
+                    }, t.name),
+                    h(Tooltip, { title: 'Edit' },
+                      h(IconButton, {
+                        size: 'small',
+                        onClick: () => { setEditTarget(t); setTemplateManagerOpen(true); },
+                      }, h(Icon, { name: 'Edit', size: 16 }))
+                    ),
+                    h(Tooltip, { title: 'Delete' },
+                      h(IconButton, {
+                        size: 'small', color: 'error',
+                        onClick: () => deleteTemplate(t.id),
+                      }, h(Icon, { name: 'Close', size: 16 }))
+                    )
+                  ))
+                ),
+            h(Button, {
+              size: 'small', variant: 'contained', onClick: () => { setEditTarget(null); setTemplateManagerOpen(true); },
+              sx: { alignSelf: 'flex-start', bgcolor: TEMPLATE_COLOR, '&:hover': { bgcolor: TEMPLATE_COLOR, filter: 'brightness(0.9)' } },
+            }, '+ Create AI Node'),
+            h(Divider),
+            h(Typography, { variant: 'overline', color: 'text.secondary' }, 'Workflow'),
+            workflowsError && h(Typography, { variant: 'caption', color: 'error' }, workflowsError),
+            (!workflowsError && workflows.length === 0)
+              ? h(Typography, { variant: 'caption', color: 'text.secondary' }, 'No saved workflows yet.')
+              : h(Box, { sx: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.5 } },
+                  workflows.map(w => h(Box, { key: w.id, sx: { display: 'flex', alignItems: 'center', gap: 0.25, minWidth: 0 } },
+                    h(Tooltip, { title: `${w.node_count} node(s)` },
+                      h(Button, {
+                        size: 'small', variant: currentWorkflowId === w.id ? 'contained' : 'outlined',
+                        sx: currentWorkflowId === w.id
+                          ? { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }
+                          : { color: 'text.primary', borderColor: 'divider', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' },
+                        onClick: () => loadWorkflow(w.id),
+                      }, w.name)
+                    ),
+                    h(Tooltip, { title: 'Delete' },
+                      h(IconButton, {
+                        size: 'small', color: 'error',
+                        onClick: () => deleteWorkflow(w.id),
+                      }, h(Icon, { name: 'Close', size: 16 }))
+                    )
+                  ))
+                ),
+            h(Button, {
+              size: 'small', variant: 'contained', onClick: () => setSaveWorkflowOpen(true),
+              sx: { alignSelf: 'flex-start' },
+            }, '+ Save Workflow')
+          ),
+          h(Box, {
+            ref: paneWrapRef,
+            sx: { flex: 1, position: 'relative', bgcolor: '#eef1f5' },
+          },
+            h(ReactFlow, {
+              nodes: rfNodes, edges: rfEdges,
+              nodeTypes: NODE_TYPES, edgeTypes: EDGE_TYPES,
+              onNodesChange, onEdgesChange, onConnect,
+              onPaneClick: () => { setSelection(null); setMenuOpen(false); },
+              defaultViewport: { x: 120, y: 80, zoom: 1 },
+              minZoom: 0.25, maxZoom: 2.5,
+              snapToGrid: true, snapGrid: [GRID_SIZE, GRID_SIZE],
+              deleteKeyCode: null, multiSelectionKeyCode: null,
+              connectionLineStyle: { stroke: PALETTE.grey[500], strokeWidth: 2.5, strokeDasharray: '6 4' },
+              proOptions: { hideAttribution: true },
+            },
+              h(Background, { variant: BackgroundVariant.Dots, gap: GRID_SIZE, size: 1.2, color: '#c7ccd4' })
+            ),
+            historyOpen && h(RunHistoryPanel, {
+              log: runLog,
+              onFocusNode: focusNode,
+              onClear: () => setRunLog([]),
+              onClose: () => setHistoryOpen(false),
+            })
+          ),
+          // Floats over the canvas like the node menu; stops above the run FABs.
+          editForm && h(Paper, {
+            key: 'edit-panel', elevation: 6, 'data-testid': 'edit-panel',
+            sx: {
+              position: 'absolute', top: 12, right: 12, width: EDIT_PANEL_WIDTH, maxHeight: 'calc(100% - 100px)', zIndex: 6,
+              p: 1.5, display: 'flex', flexDirection: 'column', gap: 1, overflowY: 'auto',
+            },
+          },
+            // Sticky so the title and close button stay put while long forms scroll.
+            h(Box, { sx: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: -12, mt: -1.5, pt: 1.5, pb: 0.5, bgcolor: 'background.paper', zIndex: 2 } },
+              h(Typography, { variant: 'subtitle2' }, `Edit ${editingView ? editingView.title : editingNode.type}`),
+              h(IconButton, {
+                size: 'small', 'aria-label': 'Close edit panel',
+                onClick: () => setEditPanelClosed(true),
+              }, h(Icon, { name: 'Close', size: 16 }))
+            ),
+            editForm
+          )
+        ),
+        h(TemplateManagerDialog, {
+          open: templateManagerOpen,
+          editTarget,
+          onClose: () => { setTemplateManagerOpen(false); setEditTarget(null); },
+          onSave: saveTemplate,
+        }),
+        h(SaveWorkflowDialog, {
+          open: saveWorkflowOpen,
+          defaultName: currentWorkflowName,
+          onClose: () => setSaveWorkflowOpen(false),
+          onSave: saveWorkflow,
+        }),
+        h(ConfirmDialog, {
+          open: !!confirmState,
+          message: confirmState && confirmState.message,
+          confirmLabel: confirmState && confirmState.confirmLabel,
+          confirmColor: confirmState && confirmState.confirmColor,
+          onCancel: () => setConfirmState(null),
+          onConfirm: () => { const action = confirmState && confirmState.action; setConfirmState(null); if (action) action(); },
+        }),
+        h(IssuesDialog, {
+          open: !!issuesDialog,
+          runBlocked: !!(issuesDialog && issuesDialog.runBlocked),
+          issues,
+          onClose: () => setIssuesDialog(null),
+          onFocusNode: id => { setIssuesDialog(null); focusNode(id); },
+          onRemoveEdge: deleteEdge,
+        }),
+        h(Snackbar, {
+          open: !!toast, autoHideDuration: 5000, onClose: () => setToast(null),
+          anchorOrigin: { vertical: 'bottom', horizontal: 'center' },
+        },
+          h(Alert, { severity: 'error', onClose: () => setToast(null) }, toast || '')
+        ),
+        // Covers everything (dialogs too) while api_server.py can't be reached — nothing
+        // node-type-specific can be drawn or edited without it.
+        serverState !== 'ok' && h(Box, {
+          'data-testid': 'server-overlay',
+          sx: { position: 'fixed', inset: 0, zIndex: 2000, bgcolor: 'rgba(255,255,255,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+        },
+          h(Paper, { elevation: 6, sx: { p: 2.5, display: 'flex', alignItems: 'center', gap: 2, maxWidth: 520 } },
+            h(CircularProgress, { size: 24 }),
+            h(Box, null,
+              h(Typography, { variant: 'body2' }, serverState === 'connecting'
+                ? `Connecting to api_server.py (${CODEX_API_BASE})…`
+                : `Not connected to api_server.py (${CODEX_API_BASE}) — editing is paused until it answers again. Retrying…`),
+              // Also shown on GitHub Pages, where the server must run on the viewer's own PC.
+              serverState !== 'connecting' && h(Typography, { variant: 'caption', component: 'div', sx: { mt: 1, color: 'text.secondary' } },
+                'Start it in the telar-de-ideas folder: uvicorn api_server:app --host 127.0.0.1 --port 9014 (see README.md).'))
+          )
+        ),
+        h(Box, { sx: { position: 'fixed', right: 24, bottom: 24, display: 'flex', gap: 1.5, zIndex: 6 } },
+          h(Tooltip, { title: historyOpen ? 'Hide run history' : 'Show run history' },
+            h(Fab, {
+              'data-testid': 'history-fab', size: 'medium', color: historyOpen ? 'secondary' : 'default',
+              onClick: () => setHistoryOpen(o => !o),
+            }, h(Icon, { name: 'History', size: 22 }))
+          ),
+          h(Tooltip, { title: 'Reset every node’s run results (AI Node output, Gate/Queue/Move status) — inputs and wiring are untouched' },
+            h('span', null, h(Fab, {
+              color: 'default', size: 'medium',
+              disabled: isRunningWorkflow,
+              onClick: resetResults,
+            }, h(Icon, { name: 'Replay', size: 22 })))
+          ),
+          h(Tooltip, { title: 'Stop the running workflow (and any Delay still counting down)' },
+            h('span', null, h(Fab, {
+              color: 'error', size: 'medium',
+              disabled: !isRunningWorkflow && !runLive,
+              onClick: () => runner.stopWorkflow(),
+            }, h(Icon, { name: 'Stop', size: 22 })))
+          ),
+          h(Tooltip, { title: 'Run the workflow (AI Nodes in dependency order, plus any Move/Queue whose inputs are ready)' },
+            h('span', null, h(Fab, {
+              color: 'primary', size: 'medium',
+              // A graph needs a node of a RUNNABLE type (Created Node, Move, Queue —
+              // the ones whose effects only happen in a run) for Run to do anything.
+              disabled: isRunningWorkflow || !nodeList.some(n => (typesByType[n.type] || {}).runnable),
+              onClick: () => runner.runWorkflow(),
+            }, isRunningWorkflow ? h(CircularProgress, { size: 22, thickness: 5, color: 'inherit' }) : h(Icon, { name: 'PlayArrow', size: 22 })))
+          )
+        )
+      );
+    }
+
+    // FlowApp calls useReactFlow(), which only works inside a provider.
+    function App() {
+      return h(ThemeProvider, { theme: THEME }, h(ReactFlowProvider, null, h(FlowApp)));
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(h(App));
+  </script>
+</body>
+</html>

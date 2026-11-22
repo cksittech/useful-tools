@@ -1,0 +1,5 @@
+# Saved data is personal (prompts, local paths); only the folders are kept.
+node_ai/*.json
+workflows/*.json
+__pycache__/
+.claude/

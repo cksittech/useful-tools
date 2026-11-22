@@ -183,7 +183,7 @@ class RunsApiTest(unittest.TestCase):
         self.assertEqual([r["id"] for r in self.client.get("/runs").json()["runs"]], ids[:0:-1])
 
     # Parameters topic (Text, test value "dogs") and n (Number, test value "2") feed a
-    # Created Node; the API Response returns its result plus the raw topic.
+    # AI Node; the API Response returns its result plus the raw topic.
     def save_api_workflow(self):
         params = [{"name": "topic", "valueType": "string", "value": "dogs"}, {"name": "n", "valueType": "number", "value": "2"}]
         nodes = {"i": node("i", "apiInput", params=params),
@@ -202,28 +202,28 @@ class RunsApiTest(unittest.TestCase):
 
     def test_api_run_with_query_parameters_and_wait(self):
         wf = self.save_api_workflow()
-        snap = self.client.post(f"/workflows/{wf}/runs", params={"topic": "猫", "n": "3", "wait": "5"}).json()
+        snap = self.client.post(f"/workflows/{wf}/runs", params={"topic": "café", "n": "3", "wait": "5"}).json()
         self.assertEqual(snap["status"], "finished")
-        self.assertEqual(snap["response"], {"summary": "ok:about 猫 x3", "echo": "猫", "unwired": None})
+        self.assertEqual(snap["response"], {"summary": "ok:about café x3", "echo": "café", "unwired": None})
         self.assertIs(snap["nodes"]["r"]["data"]["__ranPassed"], False)  # "unwired" never got a value
         self.assertIs(snap["nodes"]["i"]["data"]["__ranPassed"], True)
-        self.assertEqual([p["value"] for p in snap["nodes"]["i"]["data"]["params"]], ["猫", 3])  # Number parsed
+        self.assertEqual([p["value"] for p in snap["nodes"]["i"]["data"]["params"]], ["café", 3])  # Number parsed
         snap = self.client.post(f"/workflows/{wf}/runs", params={"topic": "owls", "n": "2.5", "wait": "5"}).json()
         self.assertEqual(snap["response"]["summary"], "ok:about owls x2.5")
 
     def test_api_by_workflow_name(self):
         wf = self.save_api_workflow()
         self.assertEqual(self.client.get("/api/API/spec").json()["id"], wf)
-        snap = self.client.get("/api/API", params={"topic": "犬", "n": "1", "wait": "5"}).json()
-        self.assertEqual((snap["workflow_id"], snap["response"]["summary"]), (wf, "ok:about 犬 x1"))
+        snap = self.client.get("/api/API", params={"topic": "naïve", "n": "1", "wait": "5"}).json()
+        self.assertEqual((snap["workflow_id"], snap["response"]["summary"]), (wf, "ok:about naïve x1"))
         self.assertEqual(self.client.get("/api/API").status_code, 400)  # parameters still required
-        self.assertEqual(self.client.post("/api/API", params={"topic": "犬", "n": "1"}).status_code, 405)  # GET only
+        self.assertEqual(self.client.post("/api/API", params={"topic": "naïve", "n": "1"}).status_code, 405)  # GET only
         for path in ("/api/nope", "/api/nope/spec"):
             r = self.client.get(path)
             self.assertEqual((r.status_code, r.json()["detail"]), (404, 'No workflow is named "nope".'))
         nodes, edges = text_to_template_to_output()
-        self.client.post("/workflows", json={"name": "要約 v2", "nodes": nodes, "edges": edges})
-        snap = self.client.get("/api/要約 v2", params={"wait": "5"}).json()  # non-ASCII / space, URL-encoded
+        self.client.post("/workflows", json={"name": "Résumé v2", "nodes": nodes, "edges": edges})
+        snap = self.client.get("/api/Résumé v2", params={"wait": "5"}).json()  # non-ASCII / space, URL-encoded
         self.assertEqual(snap["status"], "finished")
         self.client.post("/workflows", json={"name": "API", "nodes": nodes, "edges": edges})
         self.assertEqual(self.client.get("/api/API", params={"topic": "x", "n": "1"}).status_code, 409)

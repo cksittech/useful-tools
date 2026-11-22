@@ -28,17 +28,7 @@ Built on the UtilToolApp template (..\..\template).
     pip install fastapi uvicorn pydantic openai-codex
     $env:PYTHONDONTWRITEBYTECODE = "1"; uvicorn api_server:app --reload --host 127.0.0.1 --port 9014
 
-Then open index.html directly in the browser, or the GitHub Pages copy:
-https://cksittech.github.io/useful-tools/telar-de-ideas/
-
-- Pages only serves the UI. Every viewer runs api_server.py on their own PC; without it
-  the editor shows "Not connected" and stays paused.
-- Chrome / Edge ask once to allow access to the local network (127.0.0.1). Allow it.
-- CORS only allows https://cksittech.github.io and file:// (api_server.py). Add an origin
-  there if the UI is served from anywhere else (e.g. a local http server).
-- AI Nodes need the Codex CLI signed in (~/.codex).
-- node_ai/ and workflows/ are git-ignored, so saved nodes and workflows stay local.
-
+Then open index.html directly in the browser.
 If you change the port, keep --port, config.json's api_port and data.js's CODEX_API_BASE the same.
 
 ## Codex model

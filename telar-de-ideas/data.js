@@ -8,7 +8,7 @@ const CODEX_API_BASE = 'http://127.0.0.1:9014';
 const RUN_POLL_INTERVAL_MS = 500;
 // Consecutive failed polls before the editor gives up on a run (server gone).
 const RUN_POLL_MAX_FAILURES = 5;
-// Folder a Created Node's thread-id link opens via /open-path ("~" is expanded there).
+// Folder a AI Node's thread-id link opens via /open-path ("~" is expanded there).
 // Keep in sync with config.json's generated_images_dir.
 const GENERATED_IMAGES_DIR = '~/.codex/generated_images/';
 // Canvas edits settle this long before the server re-evaluates (POST /evaluate);
@@ -43,30 +43,30 @@ const RESIZE_EDGE = 7, RESIZE_CORNER = 14;
 const PORT_CONNECTED_COLOR = '#ff9800';
 const PORT_UNCONNECTED_COLOR = '#9e9e9e';
 // Menu button accents: Default Node red, Plugin Node indigo (darker shades of data.py's
-// header colors); Created Node teal (keep in sync with data.py's TEMPLATE_HEADER_COLOR).
+// header colors); AI Node teal (keep in sync with data.py's TEMPLATE_HEADER_COLOR).
 // Card header colors come from each node type (GET /node-types).
 const DEFAULT_NODE_COLOR = '#d32f2f';
 const PLUGIN_NODE_COLOR = '#303f9f';
 const TEMPLATE_COLOR = '#00acc1';
 
-// Every Created Node's free thread_id output port. "__" keeps it out of the
+// Every AI Node's free thread_id output port. "__" keeps it out of the
 // way of user-defined keys (always "out_...").
 const THREAD_ID_OUTPUT_KEY = '__thread_id';
 // Wrapper maxRetries value shown as ∞ (one step below 0); mirrors data.py's UNLIMITED_RETRIES.
 const UNLIMITED_RETRIES = -1;
-// Created Node's header control-input port for a Gate signal — see
-// compute_trigger_blocked_nodes in common.py. Only Created Node has this.
+// AI Node's header control-input port for a Gate signal — see
+// compute_trigger_blocked_nodes in common.py. Only AI Node has this.
 const TRIGGER_PORT_ID = '__trigger';
 const TRIGGER_COLOR = '#9c27b0';
-// Group's Ref port: wired into a Created Node's TRIGGER_PORT_ID, makes it a
+// Group's Ref port: wired into a AI Node's TRIGGER_PORT_ID, makes it a
 // member (group_member_ids, common.py). Carries no signal; colored apart from TRIGGER_COLOR.
 const GROUP_REF_PORT_ID = '__ref';
 const GROUP_REF_COLOR = '#607d8b';
-// Wrapper's Ref port: same as Group's, but links exactly one Created Node (wrapperLinkedNodeId).
+// Wrapper's Ref port: same as Group's, but links exactly one AI Node (wrapperLinkedNodeId).
 const WRAPPER_REF_PORT_ID = '__wrapperRef';
 const WRAPPER_REF_COLOR = '#3f51b5';
 
-// Created Node placeholder syntax (Template Manager's preview, a new node's
+// AI Node placeholder syntax (Template Manager's preview, a new node's
 // default values): {name} = string ("#" default: {name#default}), <name> = number
 // (same "#default"), [a,b,c] = select (first = default), {{a|b|c}} = no field: its
 // parts are shuffled into lines on each send (common.py's resolve_shuffle). Order

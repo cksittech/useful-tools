@@ -8,7 +8,7 @@ from pydantic import BaseModel
 # --- Request models --------------------------------------------------------------
 
 
-# POST/PUT /nodes request body: one Created Node definition.
+# POST/PUT /nodes request body: one AI Node definition.
 class NodeSaveRequest(BaseModel):
     name: str
     content: str
@@ -30,12 +30,12 @@ class RunRequest(BaseModel):
     nodes: dict = {}
     edges: list[dict] = []
     name: str | None = None
-    # Set: retry just this Created Node (the editor's per-node Retry) instead
+    # Set: retry just this AI Node (the editor's per-node Retry) instead
     # of running the whole workflow.
     retry_node_id: str | None = None
 
 
-# POST /codex/jobs request body: a Created Node's filled prompt plus its
+# POST /codex/jobs request body: a AI Node's filled prompt plus its
 # output JSON Schema (built from the node's output ports).
 class CodexJobRequest(BaseModel):
     prompt: str
@@ -93,7 +93,7 @@ API_FIELD_PORT_PREFIX = "field:"
 # M = description + one status line/chip, L = live preview/chip list that grows during a run.
 BODY_H_S, BODY_H_M, BODY_H_L = 40, 80, 120
 # Header tint of a type that sets no COLOR — red for the core's, indigo for node_plugin/
-# files (pale so the header's own Delete/Stop buttons stay visible); Created Node keeps its own teal.
+# files (pale so the header's own Delete/Stop buttons stay visible); AI Node keeps its own teal.
 DEFAULT_NODE_HEADER_COLOR = "#e57373"
 PLUGIN_NODE_HEADER_COLOR = "#7986cb"
 TEMPLATE_HEADER_COLOR = "#00acc1"

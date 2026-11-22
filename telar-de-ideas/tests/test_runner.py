@@ -354,7 +354,7 @@ def py_run(case):
 OUT2 = OUT + [{"key": "out_n", "name": "count", "valueType": "integer", "enumValues": [], "description": "", "children": []}]
 
 
-# How tests/golden/runs.json's cases were generated (kept for new cases). A random but runnable workflow: Text -> Created Nodes (chained), Gates on
+# How tests/golden/runs.json's cases were generated (kept for new cases). A random but runnable workflow: Text -> AI Nodes (chained), Gates on
 # their results (signal -> trigger, value_out -> Queue -> Move), Group/Wrapper
 # around some of them, Stack/Reset/Run Trigger on Queue signals. No Delay —
 # its wall-clock timers aren't comparable across the two event loops.

@@ -1,5 +1,5 @@
 # Format: data.content with its placeholders ({text} <number> [a,b,c], same syntax
-# as Created Node) filled from one input each; an unwired one uses its default.
+# as AI Node) filled from one input each; an unwired one uses its default.
 from common import UNDEFINED, extract_placeholders, fill_placeholders, is_present, jget, make_port, placeholder_inputs, waiting_on_inputs
 from data import BODY_H_S
 

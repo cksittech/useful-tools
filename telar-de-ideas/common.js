@@ -37,7 +37,7 @@ function extractPlaceholders(text) {
   return items;
 }
 
-// A Wrapper's linked Created Node: one edge from its WRAPPER_REF_PORT_ID to the
+// A Wrapper's linked AI Node: one edge from its WRAPPER_REF_PORT_ID to the
 // node's TRIGGER_PORT_ID (onConnect keeps only one), so an id or undefined.
 function wrapperLinkedNodeId(wrapperId, edges) {
   const e = edges.find(e => e.from.node === wrapperId && e.from.port === WRAPPER_REF_PORT_ID && e.to.port === TRIGGER_PORT_ID);

@@ -90,9 +90,9 @@ if not logger.handlers:
     logger.propagate = False
 
 
-# --- Created Node definitions -----------------------------------------------
-# One JSON file per node under nodes/, filename == id == save timestamp
-# (YYYYMMDDHHMMSS), same convention as Codex/gui's template store.
+# --- AI Node definitions ----------------------------------------------------
+# One JSON file per node under node_ai/, filename == id == save timestamp
+# (YYYYMMDDHHMMSS).
 
 NODE_AI_DIR = Path(__file__).resolve().parent / "node_ai"
 
@@ -103,7 +103,7 @@ NODE_AI_DIR = Path(__file__).resolve().parent / "node_ai"
 WORKFLOWS_DIR = Path(__file__).resolve().parent / "workflows"
 
 
-# --- JSON record store (shared by nodes/ and workflows/) ---------------------
+# --- JSON record store (shared by node_ai/ and workflows/) ------------------
 # id == filename stem == save timestamp; a same-second collision gets "_N".
 
 # [(id, data)] newest first; unreadable files are skipped.
@@ -756,7 +756,7 @@ def expand_wrapper_edges(nodes, edges):
 # then Wrapper, then each type's own expand_edges in registry order — Wrapper must
 # come before Per-wire Gate (a Gate's compare can be fed through a Wrapper; skipping
 # it keys the compare wiring by the Wrapper's id while the Gate keys
-# 'value_out@<id>' by the linked Created Node's id, so they never match), and
+# 'value_out@<id>' by the linked AI Node's id, so they never match), and
 # both after Group (compare's real member wiring only exists then).
 def expand_edges(nodes, edges):
     edges = expand_group_edges(nodes, edges)
@@ -798,7 +798,7 @@ def _merge_ports_by_label(member_defs, side):
     return [by_label[label] for label in order]
 
 
-# Members are Created Nodes or Wrappers only (a Group has no trigger port, so no
+# Members are AI Nodes or Wrappers only (a Group has no trigger port, so no
 # nesting); one merged port per label shared by its members, so one wire is
 # sugar for wiring each member (expand_group_edges).
 def _group_ports(node, nodes, edges):
@@ -811,7 +811,7 @@ def _group_ports(node, nodes, edges):
     }
 
 
-# The linked Created Node's ports verbatim; none while unlinked.
+# The linked AI Node's ports verbatim; none while unlinked.
 def _wrapper_ports(node, nodes, edges):
     linked_id = wrapper_linked_node_id(node["id"], edges)
     linked = nodes[linked_id] if linked_id is not UNDEFINED and _node_type(nodes, linked_id) == "template" else None
@@ -823,7 +823,7 @@ def _wrapper_ports(node, nodes, edges):
     }
 
 
-# One input per placeholder of `content` (Created Node, Format).
+# One input per placeholder of `content` (AI Node, Format).
 def placeholder_inputs(content):
     return [{"id": p["key"], "label": p["name"], "type": "number" if p["kind"] == "number" else "string"}
             for p in extract_placeholders(content)]
@@ -857,7 +857,7 @@ def get_node_def(node, nodes=None, edges=None):
 
 
 # Evaluates every node to {portId: value} with its type's evaluate(node, io):
-# {"values", "errors" (nodes caught in a cycle), "paramValues" (Created Nodes)}.
+# {"values", "errors" (nodes caught in a cycle), "paramValues" (AI Nodes)}.
 # Side-effect-free — it's both the editor's live view and what runs read.
 def evaluate_all(nodes, edges):
     edges = expand_edges(nodes, edges)
@@ -916,7 +916,7 @@ def evaluate_all(nodes, edges):
             src = jget(nodes, node_id)
             return get_node_def(src, nodes, edges)["title"] if isinstance(src, dict) else UNDEFINED
 
-        # Created Node only: its resolved placeholder values (evaluate_all's "paramValues").
+        # AI Node only: its resolved placeholder values (evaluate_all's "paramValues").
         def set_param_values(self, resolved):
             param_values[self.node_id] = resolved
 
@@ -1099,7 +1099,7 @@ def build_output_json_schema(fields):
     return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
 
 
-# Kahn's algorithm, one round per level: the order run_workflow runs Created Nodes in.
+# Kahn's algorithm, one round per level: the order run_workflow runs AI Nodes in.
 def node_levels_in_dependency_order(nodes, edges):
     keys = js_keys(nodes)
     adj = {k: [] for k in keys}
@@ -1407,7 +1407,7 @@ def apply_api_inputs(nodes, query):
 # --- Node types ---------------------------------------------------------------------
 # One node type per file in node_plugin/ (loaded in file name order, which is also
 # the order of the add-node menu's Plugin Node list; "_"-prefixed files are skipped —
-# _template.py is the starting point for a new one), plus the core's Created Node /
+# _template.py is the starting point for a new one), plus the core's AI Node /
 # Group / Wrapper / API Input / API Response below (the menu's Default Node list).
 # A file is a plain module; everything but TYPE is optional:
 #   TYPE, TITLE, INPUTS, OUTPUTS (make_port lists), DEFAULT_DATA, BODY_HEIGHT, COLOR
@@ -1476,7 +1476,7 @@ def node_type(t):
     return node_types().get(t) if isinstance(t, str) else None
 
 
-# --- Core node types: Created Node (template), Group, Wrapper, API Input/Response ----
+# --- Core node types: AI Node (template), Group, Wrapper, API Input/Response ---------
 
 
 def _template_evaluate(node, io):
@@ -1539,7 +1539,7 @@ def _group_check(node, chk):
         chk.add("warning", f'"{chk.title()}" has no members.')
 
 
-# Members are wired on canvas (Ref dot -> a Created Node's trigger dot); count only.
+# Members are wired on canvas (Ref dot -> a AI Node's trigger dot); count only.
 def _group_body(node, view):
     count = len(group_member_ids(node["id"], view.edges))
     return [{"kind": "caption", "text": f"{count} member{'' if count == 1 else 's'}" if count else "No members — drag from the Ref dot below"}]
@@ -1766,8 +1766,8 @@ def _api_response_body(node, view):
 
 
 CORE_NODE_TYPES = {
-    # Created Node: a Template Manager prompt run through Codex. Placed from the
-    # menu's Created Node section, not the Default Node list (MENU False).
+    # AI Node: a Template Manager prompt run through Codex. Placed from the
+    # menu's AI Node section, not the Default Node list (MENU False).
     "template": SimpleNamespace(
         TYPE="template", TITLE="AI Node", COLOR=TEMPLATE_HEADER_COLOR, MENU=False, RUNNABLE=True,
         EXTRA_INPUTS=(TRIGGER_PORT_ID,), ports=_template_ports, evaluate=_template_evaluate,
@@ -1781,7 +1781,7 @@ CORE_NODE_TYPES = {
         TYPE="group", TITLE="Group", BODY_HEIGHT=BODY_H_M, EXTRA_OUTPUTS=(GROUP_REF_PORT_ID,),
         ports=_group_ports, check=_group_check, body=_group_body,
     ),
-    # Relays one linked Created Node's ports 1:1; its outputs come through only once
+    # Relays one linked AI Node's ports 1:1; its outputs come through only once
     # the conditions pass (wrapper_outputs_ready). data.conditionGroups = OR of groups,
     # each an AND of {key, op, value} rows (WRAPPER_CONDITION_OPS). Until a group holds,
     # the runner re-runs the node (up to data.maxRetries times). Edited by index.html's
@@ -1855,7 +1855,7 @@ class _WaitingView:
         self.outs = ev["values"].get(node["id"]) or {}
         # Its run_state entry (WorkflowRunner.state) from the live run, else {}.
         self.state = (run_state or {}).get(node["id"]) or {}
-        # Created Node: its trigger is wired but not passing.
+        # AI Node: its trigger is wired but not passing.
         self.blocked = blocked
         self._eff = eff
         self._ev = ev
@@ -2612,7 +2612,7 @@ class Run:
         self.created_at = time.time()
         self.finished_at = None
         self.stop_requested = False
-        # Set: this run is one Created Node's manual retry, not a whole workflow run.
+        # Set: this run is one AI Node's manual retry, not a whole workflow run.
         self.retry_node_id = retry_node_id
         self.host = RunHost(nodes, edges)
         self.runner = WorkflowRunner(self.host, InProcessBackend(), poll_interval_ms=RUN_POLL_INTERVAL_MS,

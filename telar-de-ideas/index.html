@@ -7,7 +7,7 @@
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; overflow: hidden; font-family: sans-serif; }
     /* "Still in progress" card border (AppNode, driven by
-       compute_run_states in common.py) — blinks red while a Created Node
+       compute_run_states in common.py) — blinks red while a AI Node
        is actively executing, a Gate is still waiting on its compare wires,
        or a Group contains such a node. */
     @keyframes nodeRunningBlink {
@@ -64,7 +64,7 @@
 
     // Real Material Design icon paths (same set @mui/icons-material ships),
     // kept as a tiny local data file instead of pulling in the whole
-    // icons-material package — see Codex/gui's lib/icons-data.js. Each entry is one <path>.
+    // icons-material package — see lib/icons-data.js. Each entry is one <path>.
     const ICON_PATHS = Object.fromEntries(window.MUI_ICONS.map(([name, svg]) => [name, svg.match(/ d="([^"]+)"/)[1]]));
     function Icon({ name, size = 20, style }) {
       return h(SvgIcon, { sx: { fontSize: size, display: 'block' }, style }, h('path', { d: ICON_PATHS[name] }));
@@ -314,7 +314,7 @@
     }
 
     // Wrapper (core type, CUSTOM_FORM "wrapper"): condition groups appear once a
-    // Created Node is linked (conditions use its output fields). Groups are OR'd,
+    // AI Node is linked (conditions use its output fields). Groups are OR'd,
     // rows within a group AND'd. `edges` resolves the link.
     function WrapperEditForm({ node, updateData, nodes, edges, isRunningWorkflow }) {
       const linkedId = wrapperLinkedNodeId(node.id, edges);
@@ -1006,7 +1006,7 @@
       const [toast, setToast] = useState(null);
       const notify = msg => setToast(msg);
 
-      // Created Nodes are stored server-side as JSON files (api_server.py /nodes).
+      // AI Nodes are stored server-side as JSON files (api_server.py /nodes).
       function loadTemplates() {
         fetchNodeList()
           .then(data => { setTemplates(data.nodes || []); setTemplatesError(null); })
@@ -1039,7 +1039,7 @@
         loadTemplates();
         loadWorkflowList();
       }, [serverState]);
-      // Keeps each Created Node's definition fields (name/content/outputs) in step
+      // Keeps each AI Node's definition fields (name/content/outputs) in step
       // with its palette template (data.templateId); run state is untouched. A node
       // without templateId matches by title only when exactly one template has that
       // name. A function, not just an effect: loadWorkflow calls it too, since
@@ -1906,7 +1906,7 @@
           h(Tooltip, { title: 'Run the workflow (AI Nodes in dependency order, plus any Move/Queue whose inputs are ready)' },
             h('span', null, h(Fab, {
               color: 'primary', size: 'medium',
-              // A graph needs a node of a RUNNABLE type (Created Node, Move, Queue —
+              // A graph needs a node of a RUNNABLE type (AI Node, Move, Queue —
               // the ones whose effects only happen in a run) for Run to do anything.
               disabled: isRunningWorkflow || !nodeList.some(n => (typesByType[n.type] || {}).runnable),
               onClick: () => runner.runWorkflow(),

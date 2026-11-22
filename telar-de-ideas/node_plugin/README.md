@@ -1,42 +1,45 @@
-# ノード種別の追加方法
+# Adding a node type
 
-このフォルダの `.py` ファイル 1 つが、ノード種別 1 つにあたります。
-ファイルを置いて api_server.py を再起動すると、メニューの「Plugin Node」にボタンが追加されます。
+Each `.py` file in this folder is one node type.
+Drop a file here and restart api_server.py; a button for it appears under "Plugin Node" in the menu.
 
-## 手順
+## Steps
 
-1. `_template.py` をコピーして、`NN_名前.py` という名前で保存します（例: `16_upper.py`）。
-   - メニューの並び順はファイル名の順です。先頭の数字で順番を決めます。
-   - 名前が `_` で始まるファイルは読み込まれません。
-2. `TYPE` を他と重ならない名前に変え、ポートと処理を書きます。
-3. api_server.py を再起動します。
-   - `--reload` 付きで起動していれば、ファイルを保存しただけで自動で再起動します。
-   - 実行中のフローは再起動で止まるので、実行中でないときに保存してください。
-4. ブラウザを開き直すと、メニューに新しいノードが出ます。
+1. Copy `_template.py` and save it as `NN_name.py` (e.g. `16_upper.py`).
+   - The menu lists types in file-name order; the leading number sets the position.
+   - Files whose names start with `_` are not loaded.
+2. Change `TYPE` to a name no other type uses, then write the ports and logic.
+3. Restart api_server.py.
+   - If it was started with `--reload`, saving the file restarts it automatically.
+   - A restart stops any running workflow, so save while nothing is running.
+4. Reload the browser; the new node appears in the menu.
 
-## 書く項目
+## What a file defines
 
-必須なのは `TYPE` だけです。必要なものだけを書いてください。
+Only `TYPE` is required. Write only what the type needs.
 
-| 項目 | 内容 |
+| Name | Purpose |
 |---|---|
-| `TYPE` | ワークフローに保存される種別名。一度使ったら変えないでください（保存済みのフローが読めなくなります）。 |
-| `TITLE`, `INPUTS`, `OUTPUTS` | 表示名とポート |
-| `DEFAULT_DATA`, `BODY_HEIGHT` | 追加したときのデータとカードの高さ |
-| `evaluate(node, io)` | 出力ポートの値。編集のたびに呼ばれるので、副作用（ファイル操作など）は書かないでください。 |
-| `FIELDS` | 選択したときに右側に出る編集欄 |
-| `body(node, view)` | カードの本体に出す内容 |
-| `check(node, chk)` | 実行前チェック（配線漏れの警告など） |
-| `fire` / `settle` | 実行中の動作（副作用はここに書きます） |
+| `TYPE` | Type name stored in saved workflows. Never change it once used (saved workflows would no longer load). |
+| `TITLE`, `INPUTS`, `OUTPUTS` | Display name and ports |
+| `DEFAULT_DATA`, `BODY_HEIGHT` | Data and card height when the node is added |
+| `evaluate(node, io)` | Output port values. Called on every edit, so no side effects (file operations etc.). |
+| `FIELDS` | Edit panel shown when the node is selected |
+| `body(node, view)` | What the card body shows |
+| `check(node, chk)` | Pre-run checks (e.g. warnings for missing wires) |
+| `fire` / `settle` | Behavior during a run (side effects go here) |
 
-それぞれの書き方と使える部品は `_template.py` のコメントにまとめてあります。全項目の一覧は common.py の「Node types」の見出しにあります。既存のファイル（`01_number.py` など）も参考になります。
+How to write each one and the available building blocks are described in the comments of `_template.py`.
+The full list is under the "Node types" heading in common.py. Existing files (`01_number.py` etc.) are also good examples.
 
-## うまくいかないとき
+## Troubleshooting
 
-- ファイルに誤りがあると、そのファイルは読み込まれず、メニューの下に赤字で「Node type file failed to load — ファイル名: 理由」と表示されます。ほかのノードやサーバーは止まりません。
-- 同じ `TYPE` のファイルが 2 つあると、後から読み込まれた方がエラーになります。
+- A file with an error is skipped, and the menu shows "Node type file failed to load — file name: reason" in red
+  under the Plugin Node buttons. Other nodes and the server keep working.
+- If two files use the same `TYPE`, the one loaded later fails with an error.
 
-## このフォルダに無いもの
+## Types not in this folder
 
-- AI Node・Group・Wrapper は、ほかのノードの線やポートを組み替える仕組みと一体なので、common.py の本体に入っています。
-- API Input・API Response は、ワークフローを API として呼び出す機能（`POST /workflows/{id}/runs`）の入口と出口なので、同じく本体に入っています。
+- AI Node, Group and Wrapper rewire other nodes' edges and ports, so they live in the core of common.py.
+- API Input and API Response are the entry and exit of running a workflow as an API
+  (`POST /workflows/{id}/runs`), so they are in the core as well.

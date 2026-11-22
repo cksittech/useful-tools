@@ -1,7 +1,7 @@
 # api_server.py
 # FastAPI app: route definitions and per-request handling logic.
 #
-# Backs the Telar de Ideas app's Created Nodes: builds a prompt from
+# Backs the Telar de Ideas app's AI Nodes: builds a prompt from
 # {str}/<num>/[select] placeholders + a JSON Schema from output ports, sends
 # both to Codex, returns the parsed Structured Output.
 #
@@ -41,7 +41,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Saved records (Created Node definitions / workflows) --------------------
+# --- Saved records (AI Node definitions / workflows) --------------------
 # Both are CRUD over a JSON record store (common.list_records etc.) — one file
 # per record. Only the folder and the stored fields differ.
 
@@ -255,7 +255,7 @@ def _workflow_id_by_name(name: str) -> str:
     return ids[0]
 
 
-# Runs the workflow as saved (its stored Created Node snapshots, not nodes/). The
+# Runs the workflow as saved (its stored AI Node snapshots, not node_ai/). The
 # other query parameters fill its API Input; wait=N answers when the run ends or after N seconds.
 async def _run_saved(workflow_id: str, request: Request, wait: float):
     saved, nodes, edges = _saved_graph(workflow_id)

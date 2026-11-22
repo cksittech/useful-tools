@@ -195,7 +195,7 @@ class EvaluationTest(unittest.TestCase):
         self.assertIs(v["d"]["out"], common.UNDEFINED)
         self.assertIs(v["q"]["signal"], common.UNDEFINED)
 
-    # Group(G) -> Wrapper(W) -> Created Node(T): exercises the full expansion order.
+    # Group(G) -> Wrapper(W) -> AI Node(T): exercises the full expansion order.
     def test_group_wrapper_gate_expansion_keys_value_out_by_linked_node(self):
         nodes = graph(node("T", "template", content="x", outputs=[{"key": "out_r", "name": "result"}], outputValues={"out_r": "ok"}),
                       node("W", "wrapper", conditionGroups=[]), node("G", "group"),

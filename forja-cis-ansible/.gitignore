@@ -1,0 +1,5 @@
+# CIS Benchmark PDFs may not be hosted outside CIS (any format, incl. extracted text); bring your own.
+documents/*.pdf
+snapshot/*.js
+__pycache__/
+.claude/

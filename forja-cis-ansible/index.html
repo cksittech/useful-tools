@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Forja CIS-Ansible</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; }
+  </style>
+  <script src="lib/react.min.js"></script>
+  <script src="lib/react-dom.min.js"></script>
+  <script src="lib/material-ui.min.js"></script>
+  <script src="lib/babel.min.js"></script>
+  <script src="data.js"></script>
+  <script src="common.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" data-presets="react">
+    const {
+      Alert, AppBar, Box, Button, Chip, CircularProgress, CssBaseline, Divider, FormControl, InputLabel,
+      LinearProgress, List, ListItemButton, ListItemText, MenuItem, Paper, Select,
+      Stack, Tab, Tabs, TextField, Toolbar, Typography,
+    } = MaterialUI;
+    const { useEffect, useMemo, useState } = React;
+
+    // Browser storage stays in index.html (common.js does not touch browser state).
+    function loadSetting(key) {
+      try { return localStorage.getItem(key); } catch (e) { return null; }
+    }
+
+    function saveSetting(key, value) {
+      try { localStorage.setItem(key, value); } catch (e) { /* storage unavailable */ }
+    }
+
+    // Clipboard API, with a textarea fallback for browsers that block it on file://.
+    async function copyText(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return;
+      } catch (e) { /* fall back below */ }
+      const area = document.createElement('textarea');
+      area.value = text;
+      area.style.position = 'fixed';
+      area.style.opacity = '0';
+      document.body.appendChild(area);
+      area.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(area);
+      if (!ok) throw new Error('Copy failed');
+    }
+
+    function CopyButton({ text }) {
+      const [label, setLabel] = useState('Copy');
+      const onCopy = async () => {
+        try {
+          await copyText(text);
+          setLabel('Copied');
+        } catch (e) {
+          setLabel('Copy failed');
+        }
+        setTimeout(() => setLabel('Copy'), COPIED_MS);
+      };
+      return (
+        <Button size="small" variant="outlined" onClick={onCopy} disabled={!text}>
+          {label}
+        </Button>
+      );
+    }
+
+    function StatusChip({ status }) {
+      if (!status) return null;
+      return (
+        <Chip
+          size="small"
+          label={status}
+          color={status === 'Manual' ? 'warning' : 'primary'}
+          variant="outlined"
+        />
+      );
+    }
+
+    function ItemList({ items, selected, onSelect }) {
+      return (
+        <List dense disablePadding>
+          {items.map((item) => {
+            const isSection = item.kind === 'section';
+            const key = `${item.kind}:${item.number}`;
+            return (
+              <ListItemButton
+                key={key}
+                selected={selected === key}
+                onClick={() => onSelect(item)}
+                sx={{
+                  pl: 1 + (item.level - 1) * 1.5,
+                  bgcolor: isSection ? 'action.hover' : undefined,
+                  alignItems: 'flex-start',
+                  gap: 1,
+                }}
+              >
+                <ListItemText
+                  primary={`${item.number}  ${item.title}`}
+                  primaryTypographyProps={{
+                    fontSize: 13,
+                    fontWeight: isSection ? 700 : 400,
+                  }}
+                />
+                <StatusChip status={item.status} />
+              </ListItemButton>
+            );
+          })}
+        </List>
+      );
+    }
+
+    // ---- Snapshot (used while the API server is down) ----
+    // <script> loading works from file://, unlike fetch(); ?t= skips the browser cache.
+    function loadScript(src) {
+      return new Promise((resolve, reject) => {
+        const el = document.createElement('script');
+        el.src = `${src}?t=${Date.now()}`;
+        el.onload = () => { el.remove(); resolve(); };
+        el.onerror = () => { el.remove(); reject(new Error(NO_SNAPSHOT_MESSAGE)); };
+        document.head.appendChild(el);
+      });
+    }
+
+    function snapshotStore() {
+      return window[SNAPSHOT_GLOBAL] || { pdfs: {} };
+    }
+
+    async function loadSnapshotIndex() {
+      await loadScript(`${SNAPSHOT_DIR}/${SNAPSHOT_INDEX_FILE}`);
+      return snapshotStore().index;
+    }
+
+    async function snapshotPdf(pdf, reload) {
+      if (!reload && snapshotStore().pdfs[pdf]) return snapshotStore().pdfs[pdf];
+      const index = await loadSnapshotIndex();
+      const file = index && index.files[pdf];
+      if (!file) throw new Error(`No saved data for this PDF: ${pdf}`);
+      await loadScript(`${SNAPSHOT_DIR}/${encodeURIComponent(file)}`);
+      return snapshotStore().pdfs[pdf];
+    }
+
+    // Same answers as the API: from the API when it is up, from the snapshot otherwise.
+    const source = {
+      pdfs: (online) => online
+        ? api('/api/pdfs').then((d) => d.pdfs)
+        : loadSnapshotIndex().then((i) => i.pdfs),
+      items: (online, pdf) => online
+        ? api('/api/items', { pdf }).then((d) => d.items)
+        : snapshotPdf(pdf, true).then((s) => s.items),
+      recommendation: async (online, pdf, number) => {
+        if (online) return api('/api/recommendation', { pdf, number });
+        const rec = (await snapshotPdf(pdf)).recs[number];
+        if (!rec) throw new Error(`Recommendation not found: ${number}`);
+        return rec;
+      },
+      ansible: async (online, pdf, number) => {
+        if (online) return api('/api/ansible', { pdf, number });
+        const saved = (await snapshotPdf(pdf)).ansible[number];
+        return { status: saved ? 'done' : 'none', error: null, started_at: null, ...(saved || {}) };
+      },
+    };
+
+    function FieldBlock({ field, copyable }) {
+      const mono = MONOSPACE_FIELDS.includes(field.key);
+      return (
+        <Paper variant="outlined" sx={{ p: 2 }}>
+          <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+            <Typography variant="subtitle2" color="primary">{field.label}</Typography>
+            {copyable && <CopyButton text={field.text} />}
+          </Stack>
+          <Box
+            component="pre"
+            sx={{
+              m: 0,
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              fontFamily: mono ? 'Consolas, "Courier New", monospace' : 'inherit',
+              fontSize: mono ? 13 : 14,
+              lineHeight: 1.6,
+              bgcolor: mono ? 'grey.50' : undefined,
+              p: mono ? 1.5 : 0,
+              borderRadius: 1,
+              overflowX: 'auto',
+            }}
+          >
+            {field.text}
+          </Box>
+        </Paper>
+      );
+    }
+
+    function AnsiblePanel({ pdf, number, apiOk }) {
+      const [state, setState] = useState(null);
+      const [error, setError] = useState('');
+      const running = state && state.status === 'running';
+
+      // Saved results come from the snapshot while the API is down; only Generate needs the API.
+      useEffect(() => {
+        setState(null); setError('');
+        if (apiOk === null) return;
+        source.ansible(apiOk, pdf, number).then(setState).catch((e) => setError(e.message));
+      }, [pdf, number, apiOk]);
+
+      useEffect(() => {
+        if (!running || !apiOk) return;
+        const timer = setInterval(() => {
+          api('/api/ansible', { pdf, number }).then(setState).catch((e) => setError(e.message));
+        }, ANSIBLE_POLL_MS);
+        return () => clearInterval(timer);
+      }, [pdf, number, running, apiOk]);
+
+      const onGenerate = async () => {
+        setError('');
+        try {
+          setState(await apiPost('/api/ansible', { pdf, number }));
+        } catch (e) {
+          setError(e.message);
+        }
+      };
+
+      const result = state && state.result;
+      return (
+        <Paper variant="outlined" sx={{ p: 2, borderColor: 'success.light' }}>
+          <Stack direction="row" spacing={2} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
+            <Typography variant="subtitle2" color="success.dark">Ansible tasks</Typography>
+            <Button
+              size="small"
+              variant="contained"
+              color="success"
+              onClick={onGenerate}
+              disabled={!apiOk || !state || running}
+            >
+              {result ? 'Regenerate' : 'Generate'}
+            </Button>
+            {apiOk === false && (
+              <Typography variant="body2" color="warning.dark">{API_DOWN_NOTE}</Typography>
+            )}
+            {running && (
+              <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+                <CircularProgress size={16} />
+                <Typography variant="body2" color="text.secondary">Generating...</Typography>
+              </Stack>
+            )}
+            {result && (
+              <Typography variant="caption" color="text.secondary">
+                {state.generated_at}{state.model ? ` / ${state.model}` : ''}
+              </Typography>
+            )}
+          </Stack>
+          {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
+          {state && state.status === 'error' && (
+            <Alert severity="error" sx={{ mt: 2 }}>{state.error}</Alert>
+          )}
+          {result && (
+            <Stack spacing={2} sx={{ mt: 2 }}>
+              {result.notes && <Alert severity="info" sx={{ whiteSpace: 'pre-wrap' }}>{result.notes}</Alert>}
+              {ANSIBLE_BLOCKS.map((b) => (
+                result[b.key]
+                  ? <FieldBlock key={b.key} copyable field={{ key: 'ansible', label: b.label, text: result[b.key] }} />
+                  : <Alert key={b.key} severity="warning">{b.label}: not in this result. Press Regenerate.</Alert>
+              ))}
+            </Stack>
+          )}
+        </Paper>
+      );
+    }
+
+    function RecommendationView({ pdf, rec, tab, onTab, apiOk }) {
+      const profile = rec.fields.find((f) => f.key === 'profile');
+      const others = rec.fields.filter((f) => f.key !== 'profile');
+
+      return (
+        <Stack spacing={2}>
+          <Box>
+            <Typography variant="h6">{rec.number} {rec.title}</Typography>
+            <Stack direction="row" spacing={1} sx={{ mt: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+              <StatusChip status={rec.status} />
+              <Chip size="small" label={`PDF p.${rec.page}`} />
+              {profile && profile.text.split('\n').map((p) => (
+                <Chip key={p} size="small" label={p} color="secondary" variant="outlined" />
+              ))}
+            </Stack>
+          </Box>
+          <Tabs value={tab} onChange={(e, v) => onTab(v)} sx={{ borderBottom: 1, borderColor: 'divider' }}>
+            {DETAIL_TABS.map((t) => <Tab key={t.value} value={t.value} label={t.label} />)}
+          </Tabs>
+          {tab === 'details' && others.map((f) => <FieldBlock key={f.key} field={f} />)}
+          {tab === 'ansible' && <AnsiblePanel pdf={pdf} number={rec.number} apiOk={apiOk} />}
+        </Stack>
+      );
+    }
+
+    function SectionView({ section }) {
+      return (
+        <Stack spacing={2}>
+          <Box>
+            <Typography variant="h6">{section.number} {section.title}</Typography>
+            <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+              <Chip size="small" label="Section" />
+              <Chip size="small" label={`PDF p.${section.page}`} />
+            </Stack>
+          </Box>
+          {section.intro && (
+            <FieldBlock field={{ key: 'intro', label: 'Overview', text: section.intro }} />
+          )}
+        </Stack>
+      );
+    }
+
+    function App() {
+      const [pdfs, setPdfs] = useState([]);
+      const [pdf, setPdf] = useState('');
+      const [items, setItems] = useState([]);
+      const [query, setQuery] = useState('');
+      const [selected, setSelected] = useState('');
+      const [detail, setDetail] = useState(null);
+      const [tab, setTab] = useState(DETAIL_TABS[0].value);  // kept while moving between items
+      const [itemsPdf, setItemsPdf] = useState('');  // PDF whose items are loaded
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState('');
+      const [apiOk, setApiOk] = useState(null);  // null = not checked yet
+
+      useEffect(() => {
+        let alive = true;
+        const check = () => checkHealth().then((ok) => { if (alive) setApiOk(ok); });
+        check();
+        const timer = setInterval(check, HEALTH_POLL_MS);
+        return () => { alive = false; clearInterval(timer); };
+      }, []);
+
+      // PDF list from the API, or from the snapshot while it is down (retried when the state changes).
+      useEffect(() => {
+        if (apiOk === null || pdfs.length) return;
+        source.pdfs(apiOk)
+          .then((list) => {
+            setPdfs(list); setError('');
+            const last = loadSetting(LAST_PDF_KEY);
+            if (last && list.includes(last)) setPdf(last);
+          })
+          .catch((e) => setError(e.message));
+      }, [apiOk]);
+
+      // Items are loaded once per PDF; switching between API and snapshot keeps them.
+      useEffect(() => {
+        if (!pdf || apiOk === null || itemsPdf === pdf) return;
+        saveSetting(LAST_PDF_KEY, pdf);
+        setItems([]); setSelected(''); setDetail(null); setError(''); setLoading(true);
+        source.items(apiOk, pdf)
+          .then((list) => { setItems(list); setItemsPdf(pdf); })
+          .catch((e) => setError(e.message))
+          .finally(() => setLoading(false));
+      }, [pdf, apiOk]);
+
+      const visible = useMemo(() => filterItems(items, query), [items, query]);
+      const recCount = items.filter((i) => i.kind === 'recommendation').length;
+
+      const onSelect = async (item) => {
+        setSelected(`${item.kind}:${item.number}`);
+        setError('');
+        if (item.kind === 'section') {
+          setDetail({ kind: 'section', data: item });
+          return;
+        }
+        try {
+          const rec = await source.recommendation(apiOk, pdf, item.number);
+          setDetail({ kind: 'recommendation', data: rec });
+        } catch (e) {
+          setError(e.message);
+        }
+      };
+
+      return (
+        <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+          <CssBaseline />
+          <AppBar position="static" color="default" elevation={1}>
+            <Toolbar variant="dense" sx={{ gap: 2 }}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 700, whiteSpace: 'nowrap' }}>
+                Forja CIS-Ansible
+              </Typography>
+              <FormControl size="small" sx={{ minWidth: 420, maxWidth: 640, flex: 1 }}>
+                <InputLabel>PDF</InputLabel>
+                <Select label="PDF" value={pdf} onChange={(e) => setPdf(e.target.value)}>
+                  {pdfs.map((p) => <MenuItem key={p} value={p}>{p}</MenuItem>)}
+                </Select>
+              </FormControl>
+              {recCount > 0 && (
+                <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
+                  {recCount} recommendations
+                </Typography>
+              )}
+            </Toolbar>
+            {loading && <LinearProgress />}
+          </AppBar>
+
+          {error && <Alert severity="error" sx={{ borderRadius: 0 }}>{error}</Alert>}
+
+          <Box sx={{ flex: 1, display: 'flex', minHeight: 0 }}>
+            <Box sx={{ width: 440, display: 'flex', flexDirection: 'column', borderRight: 1, borderColor: 'divider' }}>
+              <Box sx={{ p: 1 }}>
+                <TextField
+                  size="small"
+                  fullWidth
+                  placeholder="Filter by number or title (e.g. 1.1.1.5, ssh)"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  disabled={!items.length}
+                />
+              </Box>
+              <Divider />
+              <Box sx={{ flex: 1, overflowY: 'auto' }}>
+                {!pdf && (
+                  <Typography sx={{ p: 2 }} color="text.secondary">Select a PDF.</Typography>
+                )}
+                <ItemList items={visible} selected={selected} onSelect={onSelect} />
+              </Box>
+            </Box>
+
+            <Box sx={{ flex: 1, overflowY: 'auto', p: 3 }}>
+              {!detail && items.length > 0 && (
+                <Typography color="text.secondary">Select an item from the list.</Typography>
+              )}
+              {detail && detail.kind === 'recommendation' && <RecommendationView pdf={pdf} rec={detail.data} tab={tab} onTab={setTab} apiOk={apiOk} />}
+              {detail && detail.kind === 'section' && <SectionView section={detail.data} />}
+            </Box>
+          </Box>
+        </Box>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

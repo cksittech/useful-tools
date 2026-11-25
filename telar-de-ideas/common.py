@@ -21,7 +21,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from openai_codex import Codex
+from openai_codex import Codex, Sandbox
 
 from data import (
     API_FIELD_PORT_PREFIX,
@@ -32,6 +32,16 @@ from data import (
     BODY_H_M,
     BODY_H_S,
     DEFAULT_NODE_HEADER_COLOR,
+    GENERATE_CARD_CHROME,
+    GENERATE_CORE_NOTES,
+    GENERATE_EXCLUDED_TYPES,
+    GENERATE_GRID_SIZE,
+    GENERATE_MAX_ATTEMPTS,
+    GENERATE_MIN_BODY_HEIGHT,
+    GENERATE_MIN_GAP,
+    GENERATE_NODE_WIDTH,
+    GENERATE_PORT_ROW_H,
+    GENERATE_TEMPLATE_BODY_HEIGHT,
     PLUGIN_NODE_HEADER_COLOR,
     GROUP_MEMBER_TYPES,
     GROUP_REF_PORT_ID,
@@ -1099,12 +1109,29 @@ def build_output_json_schema(fields):
     return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
 
 
+# A Wrapper's / Group's outputs carry its AI Nodes' values, so whatever they feed
+# depends on those AI Nodes too (else it would run alongside them, before the values exist).
+def _run_order_edges(nodes, edges):
+    out = list(edges)
+    for e in edges:
+        frm, port, to = e["from"]["node"], e["from"]["port"], e["to"]
+        t = _node_type(nodes, frm)
+        if t == "wrapper" and port != WRAPPER_REF_PORT_ID:
+            sources = [wrapper_linked_node_id(frm, edges)]
+        elif t == "group" and port != GROUP_REF_PORT_ID:
+            sources = group_member_ids(frm, edges)
+        else:
+            continue
+        out += [{"from": {"node": s, "port": port}, "to": to} for s in sources if s is not UNDEFINED and s != to["node"]]
+    return out
+
+
 # Kahn's algorithm, one round per level: the order run_workflow runs AI Nodes in.
 def node_levels_in_dependency_order(nodes, edges):
     keys = js_keys(nodes)
     adj = {k: [] for k in keys}
     indegree = {k: 0 for k in keys}
-    for e in edges:
+    for e in _run_order_edges(nodes, edges):
         if e["from"]["node"] not in adj or e["to"]["node"] not in indegree:
             continue
         adj[e["from"]["node"]].append(e["to"]["node"])
@@ -1996,6 +2023,360 @@ def editor_view(nodes, edges, running=False, run_state=None):
     except Exception:
         pass
     return to_jsonable({"nodes": view, "issues": issues, "connected": sorted(connected)})
+
+
+# --- Workflow generation (POST /workflows/generate) ----------------------------------
+# Codex turns a plain-words request into a workflow via Structured Output. The saved
+# form's id-keyed dicts can't be written in strict mode, so Codex answers a node list
+# (data per type from its edit fields) that generated_to_workflow converts; problems
+# validate_workflow finds go back on the same thread for another try.
+
+
+# JSON Schema of the value one edit field stores, or None (caption, button).
+def _field_value_schema(field):
+    kind = jget(field, "kind")
+    if kind == "text":
+        s = {"type": "string"}
+    elif kind == "number":
+        s = {"type": "string" if jget(field, "store") == "string" else "number"}
+    elif kind in ("select", "toggle"):
+        values = [o["value"] for o in js_or(jget(field, "options"), [])]
+        ints = values and all(isinstance(v, int) and not isinstance(v, bool) for v in values)
+        s = {"type": "integer" if ints else "string", "enum": values}
+    elif kind == "list":
+        s = {"type": "array", "items": {"type": "string"}}
+    elif kind == "records":
+        s = {"type": "array", "items": _fields_object_schema(js_or(jget(field, "fields"), []))}
+    else:
+        return None
+    desc = " — ".join(v for v in (jget(field, "label"), jget(field, "helper")) if isinstance(v, str) and v)
+    if desc:
+        s["description"] = desc
+    return s
+
+
+def _fields_object_schema(fields):
+    props = {}
+    for f in fields:
+        s = _field_value_schema(f) if isinstance(jget(f, "key"), str) else None
+        if s is not None:
+            props[f["key"]] = s
+    return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
+
+
+# {type: spec} Generate may place, besides AI Node.
+def _generate_types():
+    return {t: s for t, s in node_types().items() if t not in GENERATE_EXCLUDED_TYPES and t != "template"}
+
+
+def _new_node_fields(t, spec):
+    return _node_fields(spec, {"id": "n0", "type": t, "data": copy.deepcopy(getattr(spec, "DEFAULT_DATA", {}))})
+
+
+def _closed_object(props):
+    return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
+
+
+# data schema per type: only what the editor lets a user set — its edit fields, Wrapper's
+# own form; Group has none (no title either: the editor can't set one).
+def _generate_data_schema(t, spec):
+    if t == "group":
+        return _closed_object({})
+    if t == "wrapper":
+        cond = _closed_object({"key": {"type": "string"}, "op": {"type": "string", "enum": WRAPPER_CONDITION_OPS},
+                               "value": {"type": "string"}, "total": {"type": "boolean"}})
+        return _closed_object({
+            "maxRetries": {"type": "integer", "description": f"Re-runs after the first; {UNLIMITED_RETRIES} = until Stop"},
+            "conditionGroups": {"type": "array", "items": {"type": "array", "items": cond}},
+        })
+    return _fields_object_schema(_new_node_fields(t, spec))
+
+
+def _node_variant_schema(t, extra):
+    props = {"id": {"type": "string"}, "type": {"type": "string", "enum": [t]}, **extra,
+             "x": {"type": "number"}, "y": {"type": "number"}}
+    return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
+
+
+# templates: list_records(NODE_AI_DIR).
+def build_generate_schema(templates):
+    variants = [_node_variant_schema(t, {"data": _generate_data_schema(t, s)}) for t, s in _generate_types().items()]
+    if templates:
+        variants.append(_node_variant_schema("template", {"templateId": {"type": "string", "enum": [tid for tid, _ in templates]}}))
+    ends = ("from_node", "from_port", "to_node", "to_port")
+    edge = {"type": "object", "properties": {k: {"type": "string"} for k in ends}, "required": list(ends), "additionalProperties": False}
+    props = {
+        "name": {"type": "string", "description": "Short workflow name"},
+        "summary": {"type": "string", "description": "What the workflow does, and any part of the request it could not build"},
+        "nodes": {"type": "array", "items": {"anyOf": variants}},
+        "edges": {"type": "array", "items": edge},
+    }
+    return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
+
+
+def _type_catalog_entry(t, spec):
+    entry = {"type": t, "title": getattr(spec, "TITLE", t), "inputs": getattr(spec, "INPUTS", []),
+             "outputs": getattr(spec, "OUTPUTS", []), "multiInputs": list(getattr(spec, "MULTI_INPUTS", ())),
+             "defaultData": getattr(spec, "DEFAULT_DATA", {}), "bodyHeight": getattr(spec, "BODY_HEIGHT", BODY_H_M),
+             "extraInputs": list(getattr(spec, "EXTRA_INPUTS", ())), "extraOutputs": list(getattr(spec, "EXTRA_OUTPUTS", ()))}
+    path = getattr(spec, "__file__", None)
+    if path:
+        entry["source"] = Path(path).read_text(encoding="utf-8")
+    if t in GENERATE_CORE_NOTES:
+        entry["notes"] = GENERATE_CORE_NOTES[t]
+    return entry
+
+
+def _template_catalog_entry(tid, t):
+    ports = _template_ports({"data": t}, {}, [])
+    return {"templateId": tid, "name": t.get("name"), "inputs": ports["inputs"], "outputs": ports["outputs"],
+            "extraInputs": [TRIGGER_PORT_ID], "bodyHeight": GENERATE_TEMPLATE_BODY_HEIGHT, "content": t.get("content")}
+
+
+def build_generate_prompt(request, templates):
+    types = [_type_catalog_entry(t, s) for t, s in _generate_types().items()]
+    tpls = [_template_catalog_entry(tid, t) for tid, t in templates]
+    return "\n".join([
+        "You design workflows for Telar de Ideas, a node editor. Turn the request at the end into one workflow.",
+        "Answer only with the JSON the output schema asks for. Do not run commands or read or change files.",
+        "",
+        "Rules:",
+        "- Node ids are n1, n2, n3, ... A wire goes from an output port of one node to an input port of another;"
+        " from_port/to_port are port ids, not labels.",
+        "- Ports are each type's inputs/outputs below. A type with ports() in its source derives them from data:"
+        ' Format and AI Node get one input per placeholder of content, id "<kind>:<name>"'
+        ' ({name} -> "string:name", <name> -> "number:name", [a,b] -> "select:a,b").',
+        "- An input takes one wire unless it is in multiInputs. extraInputs/extraOutputs are wiring-only ports"
+        f' (Group/Wrapper links); "{TRIGGER_PORT_ID}" takes several wires.',
+        '- Use only these types. An AI Node (type "template") runs a saved definition picked by templateId;'
+        " its ports are listed with it. Never invent definitions.",
+        f'- An AI Node\'s or Wrapper\'s "{TRIGGER_PORT_ID}" input, besides the Group/Wrapper links, takes a signal:'
+        " any output wired there makes the node run only once that value arrives and is truthy.",
+        "- Read the notes of Group and Wrapper before using them; their port ids differ from the AI Node's.",
+        f"- Layout: x, y = a card's top-left, y grows downward; every card is {GENERATE_NODE_WIDTH} wide. Inputs sit on"
+        f' the left edge and outputs on the right edge, but "{TRIGGER_PORT_ID}" is at the top center and'
+        f' "{GROUP_REF_PORT_ID}" / "{WRAPPER_REF_PORT_ID}" at the bottom center.',
+        "  Place nodes by where their wires attach, so wires stay short and never run backwards: across a"
+        " left-to-right wire (output -> input) the target goes to the right; across a bottom-to-top wire"
+        f' ("{GROUP_REF_PORT_ID}" / "{WRAPPER_REF_PORT_ID}" -> "{TRIGGER_PORT_ID}") the target goes below —'
+        " a Group's members side by side in a row under the Group, each Wrapper's AI Node straight under its"
+        " Wrapper (same x). Other wires into such a row come from the left or from above.",
+        f"  Card height = ceil(({GENERATE_CARD_CHROME} + {GENERATE_PORT_ROW_H} * max(inputs, outputs, 1)"
+        f" + max({GENERATE_MIN_BODY_HEIGHT}, bodyHeight)) / {GENERATE_GRID_SIZE}) * {GENERATE_GRID_SIZE},"
+        " counting the node's own ports as placed (not extraInputs/extraOutputs); bodyHeight is in its"
+        f" catalog entry. Leave at least 40 between cards and never let cards overlap.",
+        "- If part of the request can't be built with these types, build the rest and say what is missing in summary.",
+        "- Write name and summary in the request's language.",
+        "",
+        "Node types (JSON):",
+        json.dumps(types, ensure_ascii=False),
+        "",
+        "AI Node definitions (JSON):",
+        json.dumps(tpls, ensure_ascii=False) if tpls else "(none)",
+        "",
+        "Request:",
+        request,
+    ])
+
+
+def _snap(v):
+    return round(v / GENERATE_GRID_SIZE) * GENERATE_GRID_SIZE if is_number(v) and math.isfinite(v) else 0
+
+
+def _template_node_data(tid, t):
+    content = js_or(t.get("content"), "")
+    outputs = copy.deepcopy(js_or(t.get("outputs"), []))
+    return {"templateId": tid, "title": js_or(t.get("name"), "AI Node"), "content": content,
+            "values": {p["key"]: p["defaultValue"] for p in extract_placeholders(content)},
+            "outputs": outputs, "outputValues": {jget(o, "key"): "" for o in outputs}}
+
+
+# Codex's answer -> (saved-form workflow, {answered id: id used} for ids it had to change).
+# Ids stay as answered when they are unique "n<digits>", so problem messages match.
+def generated_to_workflow(out, templates):
+    by_tid = dict(templates)
+    raw = [n for n in js_or(jget(out, "nodes"), []) if isinstance(n, dict)]
+    valid = lambda i: isinstance(i, str) and re.fullmatch(r"n\d+", i) is not None
+    used = set()
+    ids = []
+    for n in raw:
+        i = n.get("id")
+        ids.append(i if valid(i) and i not in used else None)
+        if ids[-1]:
+            used.add(i)
+    taken = set(used)
+    counter = 1
+    renamed, id_map, nodes = {}, {}, {}
+    for z, (n, nid) in enumerate(zip(raw, ids), start=1):
+        if nid is None:
+            while f"n{counter}" in taken:
+                counter += 1
+            nid = f"n{counter}"
+            taken.add(nid)
+            renamed[js_string(n.get("id"))] = nid
+        id_map.setdefault(n.get("id"), nid)
+        t = n.get("type")
+        spec = node_type(t)
+        if t == "template":
+            data, body_h = _template_node_data(n.get("templateId"), by_tid.get(n.get("templateId")) or {}), GENERATE_TEMPLATE_BODY_HEIGHT
+        else:
+            data = {**copy.deepcopy(getattr(spec, "DEFAULT_DATA", {})), **(n.get("data") if isinstance(n.get("data"), dict) else {})}
+            if t in ("group", "wrapper"):
+                data.pop("title", None)
+            body_h = getattr(spec, "BODY_HEIGHT", BODY_H_M)
+        nodes[nid] = {"id": nid, "type": t, "x": _snap(n.get("x")), "y": _snap(n.get("y")), "z": z, "bodyHeight": body_h, "data": data}
+    edges = []
+    for i, e in enumerate([e for e in js_or(jget(out, "edges"), []) if isinstance(e, dict)], start=1):
+        edges.append({"id": f"e{i}",
+                      "from": {"node": id_map.get(e.get("from_node"), js_string(e.get("from_node"))), "port": js_string(e.get("from_port"))},
+                      "to": {"node": id_map.get(e.get("to_node"), js_string(e.get("to_node"))), "port": js_string(e.get("to_port"))}})
+    name = js_trim(js_or(jget(out, "name"), "")) or "Generated workflow"
+    return {"name": name, "nodes": nodes, "edges": edges, "pan": {"x": 120, "y": 80}, "zoom": 1}, renamed
+
+
+# Card height as index.html draws it (common.js gridAlignedBodyHeight).
+def card_height(node, nodes, edges):
+    d = get_node_def(node, nodes, edges)
+    rows = max(len(d["inputs"]), len(d["outputs"]), 1)
+    body = max(GENERATE_MIN_BODY_HEIGHT, node.get("bodyHeight") or 0)
+    return math.ceil((GENERATE_CARD_CHROME + rows * GENERATE_PORT_ROW_H + body) / GENERATE_GRID_SIZE) * GENERATE_GRID_SIZE
+
+
+# One message per pair of cards closer than GENERATE_MIN_GAP.
+def overlap_problems(wf):
+    nodes, edges = wf["nodes"], wf["edges"]
+    rects = []
+    for nid, n in nodes.items():
+        try:
+            rects.append((nid, n["x"], n["y"], card_height(n, nodes, edges)))
+        except Exception:
+            continue
+    out = []
+    w, gap = GENERATE_NODE_WIDTH, GENERATE_MIN_GAP
+    for i, (a, ax, ay, ah) in enumerate(rects):
+        for b, bx, by, bh in rects[i + 1:]:
+            if ax < bx + w + gap and bx < ax + w + gap and ay < by + bh + gap and by < ay + ah + gap:
+                out.append(f"Cards {a} ({ax}, {ay}, {w}x{ah}) and {b} ({bx}, {by}, {w}x{bh}) overlap or are less than {gap} apart.")
+    return out
+
+
+# (messages to send back to Codex, [{level, message}] left for the user).
+def generation_problems(wf):
+    issues = validate_workflow(wf["nodes"], wf["edges"])
+    # Group/Wrapper warnings (no members, unlinked, a condition on a missing output) are wiring mistakes here.
+    linking = {k for k, n in wf["nodes"].items() if n["type"] in ("group", "wrapper")}
+    resend = [i["message"] for i in issues
+              if i["level"] == "error" or jget(i, "fix") == "removeEdge" or jget(i, "nodeId") in linking]
+    overlaps = overlap_problems(wf)
+    left = [{"level": i["level"], "message": i["message"]} for i in issues] + [{"level": "warning", "message": m} for m in overlaps]
+    return resend + overlaps, left
+
+
+def _generate_retry_prompt(problems, wf, renamed):
+    lines = ["The workflow you returned has these problems:", *[f"- {p}" for p in problems], ""]
+    if renamed:
+        lines += ["Node ids were changed to unique n<digits> ones: " + ", ".join(f"{a} -> {b}" for a, b in renamed.items()), ""]
+    lines.append("Your nodes as placed (id type, top-left, card size: inputs / outputs):")
+    for nid, node in wf["nodes"].items():
+        try:
+            ins = _node_port_ids(node, wf["nodes"], wf["edges"], "in")
+            outs = _node_port_ids(node, wf["nodes"], wf["edges"], "out")
+            size = f"{GENERATE_NODE_WIDTH}x{card_height(node, wf['nodes'], wf['edges'])}"
+        except Exception:
+            ins, outs, size = [], [], "?"
+        lines.append(f"- {nid} {node['type']}, ({node['x']}, {node['y']}), {size}: [{', '.join(ins)}] / [{', '.join(outs)}]")
+    lines += ["", "Your wires as numbered in the messages:"]
+    lines += [f"- {e['id']}: {e['from']['node']}.{e['from']['port']} -> {e['to']['node']}.{e['to']['port']}" for e in wf["edges"]]
+    lines += ["", "Return the whole corrected workflow."]
+    return "\n".join(lines)
+
+
+def start_generate_job(request: str) -> dict:
+    job_id = str(uuid.uuid4())
+    with codex_jobs_lock:
+        codex_jobs[job_id] = new_job_state(job_id, request, None, None)
+    threading.Thread(target=run_generate_job, args=(job_id, request), daemon=True).start()
+    return {"job_id": job_id}
+
+
+def _run_turn(job_id, thread, prompt, schema):
+    turn_handle = thread.turn(prompt, output_schema=schema, model=CODEX_MODEL, effort=CODEX_REASONING_EFFORT)
+    # Same publish-then-check as run_codex_job, so a stop never slips between.
+    with codex_jobs_lock:
+        codex_jobs[job_id]["turn_handle"] = turn_handle
+        stop_now = codex_jobs[job_id]["stop_requested"]
+    if stop_now:
+        turn_handle.interrupt()
+    return turn_handle.run()
+
+
+# Thread target for POST /workflows/generate. job["output"] = {"workflow", "summary",
+# "issues", "attempts"} from the latest answer (kept on a stop between turns too).
+# Read-only sandbox: generating never touches files.
+def run_generate_job(job_id: str, request: str) -> None:
+    def finish(status, error=None):
+        with codex_jobs_lock:
+            codex_jobs[job_id]["status"] = status
+            if error is not None:
+                codex_jobs[job_id]["error"] = error
+
+    with codex_jobs_lock:
+        codex_jobs[job_id]["status"] = "running"
+        codex_jobs[job_id]["duration_ms"] = 0
+    try:
+        if _stop_requested(job_id):
+            _mark_stopped_before_turn(job_id)
+            return
+        templates = list_records(NODE_AI_DIR)
+        schema = build_generate_schema(templates)
+        prompt = build_generate_prompt(request, templates)
+        codex = _start_codex_session()
+        try:
+            if _stop_requested(job_id):
+                _mark_stopped_before_turn(job_id)
+                return
+            thread = codex.thread_start(model=CODEX_MODEL, sandbox=Sandbox.read_only)
+            with codex_jobs_lock:
+                codex_jobs[job_id]["thread_id"] = thread.id
+            try:
+                for attempt in range(1, GENERATE_MAX_ATTEMPTS + 1):
+                    result = _run_turn(job_id, thread, prompt, schema)
+                    with codex_jobs_lock:
+                        job = codex_jobs[job_id]
+                        job["duration_ms"] += result.duration_ms or 0
+                        job["response"] = result.final_response
+                    if result.status.value == "failed":
+                        finish("error", result.error.message if result.error is not None else "Codex turn failed.")
+                        return
+                    if result.status.value == "interrupted":
+                        finish("stopped")
+                        return
+                    try:
+                        out = json.loads(result.final_response)
+                    except Exception as parse_err:
+                        finish("error", f"Structured output was not valid JSON: {parse_err}")
+                        return
+                    wf, renamed = generated_to_workflow(out, templates)
+                    resend, issues = generation_problems(wf)
+                    with codex_jobs_lock:
+                        codex_jobs[job_id]["output"] = to_jsonable({"workflow": wf, "summary": js_or(jget(out, "summary"), ""),
+                                                                    "issues": issues, "attempts": attempt})
+                    if not resend or attempt == GENERATE_MAX_ATTEMPTS:
+                        finish("done")
+                        return
+                    if _stop_requested(job_id):
+                        finish("stopped")
+                        return
+                    prompt = _generate_retry_prompt(resend, wf, renamed)
+            finally:
+                codex.thread_archive(thread.id)
+        finally:
+            codex.close()
+    except Exception as e:
+        finish("error", str(e))
+    finally:
+        with codex_jobs_lock:
+            codex_jobs[job_id]["turn_handle"] = None
 
 
 # --- Workflow runner ----------------------------------------------------------------

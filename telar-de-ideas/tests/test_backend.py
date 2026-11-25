@@ -1,6 +1,7 @@
 # tests/test_backend.py
 # Backend regression tests (stdlib unittest + FastAPI TestClient; Codex is faked).
 # Run from the project root: python -m unittest discover -s tests -p "test_*.py"
+import json
 import shutil
 import sys
 import tempfile
@@ -237,6 +238,141 @@ class EditorApiTest(unittest.TestCase):
         self.assertEqual(view["nodes"]["o"]["body"], [{"kind": "value", "text": "2"}])
         self.assertEqual(view["nodes"]["o"]["title"], "Output")
         self.assertEqual(view["issues"], [])
+
+
+# Codex answers for workflow generation: a wire on a wrong port, then the fix.
+def _gen_answer(to_port):
+    return json.dumps({
+        "name": "Sum", "summary": "adds",
+        "nodes": [{"id": "n1", "type": "number", "data": {"value": "2"}, "x": 3, "y": 0},
+                  {"id": "out", "type": "sink", "data": {}, "x": 300, "y": 0}],
+        "edges": [{"from_node": "n1", "from_port": "out", "to_node": "out", "to_port": to_port}],
+    })
+
+
+class GenerateTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self._orig = (common.NODE_AI_DIR, common.Codex)
+        common.NODE_AI_DIR = self.tmp
+        (self.tmp / "t1.json").write_text(json.dumps({"name": "Ask", "content": "Hi {who}", "outputs": [{"key": "o1", "name": "answer"}]}), encoding="utf-8")
+        self.calls = []
+        answers = [_gen_answer("value"), _gen_answer("in")]
+        test = self
+
+        class Codex:
+            def thread_start(self, **kw):
+                test.calls.append(("thread_start", kw))
+
+                def turn(prompt, output_schema=None, **kw):
+                    test.calls.append(("turn", prompt))
+                    resp = answers.pop(0)
+                    return SimpleNamespace(interrupt=lambda: None, run=lambda: SimpleNamespace(
+                        status=SimpleNamespace(value="completed"), duration_ms=5, final_response=resp, error=None))
+                return SimpleNamespace(id="t", turn=turn)
+
+            def thread_archive(self, thread_id):
+                pass
+
+            def close(self):
+                pass
+        common.Codex = Codex
+
+    def tearDown(self):
+        common.NODE_AI_DIR, common.Codex = self._orig
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    # Strict Structured Output: every object closed with all its properties required.
+    def test_schema_is_strict(self):
+        def walk(s):
+            if s.get("type") == "object":
+                self.assertFalse(s["additionalProperties"])
+                self.assertEqual(sorted(s["required"]), sorted(s["properties"]))
+            for v in s.get("properties", {}).values():
+                walk(v)
+            if "items" in s:
+                walk(s["items"])
+            for v in s.get("anyOf", []):
+                walk(v)
+        schema = common.build_generate_schema(common.list_records(common.NODE_AI_DIR))
+        walk(schema)
+        variants = {v["properties"]["type"]["enum"][0]: v for v in schema["properties"]["nodes"]["items"]["anyOf"]}
+        self.assertNotIn("apiInput", variants)
+        self.assertEqual(variants["group"]["properties"]["data"]["properties"], {})
+        self.assertEqual(variants["wrapper"]["properties"]["data"]["required"], ["maxRetries", "conditionGroups"])
+        cond = variants["wrapper"]["properties"]["data"]["properties"]["conditionGroups"]["items"]["items"]
+        self.assertEqual(cond["properties"]["op"]["enum"], common.WRAPPER_CONDITION_OPS)
+        self.assertEqual(variants["template"]["properties"]["templateId"]["enum"], ["t1"])
+        self.assertEqual(variants["calc"]["properties"]["data"]["properties"]["op"]["enum"], ["+", "-", "*", "/"])
+
+    def test_to_workflow_keeps_or_renames_ids(self):
+        out = {"name": " ", "nodes": [
+            {"id": "n2", "type": "text", "data": {"value": "x"}, "x": 11, "y": 29},
+            {"id": "fmt", "type": "format", "data": {"content": "{a}"}, "x": 300, "y": 0},
+            {"id": "n2", "type": "sink", "data": {}, "x": 600, "y": 0},
+            {"id": "n3", "type": "template", "templateId": "t1", "x": 900, "y": 0}],
+            "edges": [{"from_node": "n2", "from_port": "out", "to_node": "fmt", "to_port": "string:a"}]}
+        wf, renamed = common.generated_to_workflow(out, common.list_records(common.NODE_AI_DIR))
+        self.assertEqual(list(wf["nodes"]), ["n2", "n1", "n4", "n3"])
+        self.assertEqual(renamed, {"fmt": "n1", "n2": "n4"})
+        self.assertEqual(wf["name"], "Generated workflow")
+        self.assertEqual((wf["nodes"]["n2"]["x"], wf["nodes"]["n2"]["y"]), (20, 20))
+        self.assertEqual(wf["edges"], [{"id": "e1", "from": {"node": "n2", "port": "out"}, "to": {"node": "n1", "port": "string:a"}}])
+        self.assertEqual(wf["nodes"]["n3"]["data"]["values"], {"string:who": ""})
+        self.assertEqual(wf["nodes"]["n3"]["data"]["title"], "Ask")
+        self.assertEqual(common.generation_problems(wf)[0], [])
+
+    # Group/Wrapper warnings are resent; a Group port id is the label, a Wrapper's the AI Node's own.
+    def test_group_wrapper_problems_resent(self):
+        cond = [[{"key": "answer", "op": "eq", "value": "ok", "total": False}]]
+        out = {"name": "G", "nodes": [
+            {"id": "n1", "type": "text", "data": {"value": "x"}, "x": 0, "y": 0},
+            {"id": "n2", "type": "group", "data": {"title": "All"}, "x": 300, "y": 0},
+            {"id": "n3", "type": "wrapper", "data": {"title": "W", "maxRetries": 2, "conditionGroups": cond}, "x": 300, "y": 300},
+            {"id": "n4", "type": "template", "templateId": "t1", "x": 300, "y": 600},
+            {"id": "n5", "type": "group", "data": {"title": "Empty"}, "x": 900, "y": 0}],
+            "edges": [{"from_node": "n1", "from_port": "out", "to_node": "n2", "to_port": "who"},
+                      {"from_node": "n2", "from_port": "__ref", "to_node": "n3", "to_port": "__trigger"},
+                      {"from_node": "n3", "from_port": "__wrapperRef", "to_node": "n4", "to_port": "__trigger"}]}
+        wf, renamed = common.generated_to_workflow(out, common.list_records(common.NODE_AI_DIR))
+        self.assertEqual(wf["nodes"]["n3"]["data"]["maxRetries"], 2)
+        self.assertNotIn("title", wf["nodes"]["n3"]["data"])  # the editor can't set one
+        self.assertEqual(wf["nodes"]["n2"]["data"], {})
+        resend, _ = common.generation_problems(wf)
+        self.assertEqual(len(resend), 2)
+        self.assertIn('condition on an output "answer"', resend[0])  # the key is "o1", not the name
+        self.assertIn('"Group" has no members', resend[1])
+        retry = common._generate_retry_prompt(resend, wf, renamed)
+        self.assertIn("n2 group, (300, 0), 240x200: [who] / [thread_id, answer, __ref]", retry)
+        self.assertIn("n3 wrapper, (300, 300), 240x240: [string:who, __trigger] / [__thread_id, o1, __wrapperRef]", retry)
+
+    # Card sizes as index.html draws them; cards closer than GENERATE_MIN_GAP are sent back.
+    def test_overlapping_cards_are_problems(self):
+        out = {"name": "O", "nodes": [{"id": "n1", "type": "number", "data": {"value": "1"}, "x": 0, "y": 0},
+                                      {"id": "n2", "type": "number", "data": {"value": "2"}, "x": 0, "y": 120},
+                                      {"id": "n3", "type": "number", "data": {"value": "3"}, "x": 0, "y": 140}], "edges": []}
+        wf, _ = common.generated_to_workflow(out, [])
+        self.assertEqual(common.card_height(wf["nodes"]["n1"], wf["nodes"], []), 120)
+        resend, left = common.generation_problems(wf)
+        self.assertEqual(len(resend), 2)  # n1/n2 touch, n2/n3 overlap; n1/n3 are 20 apart
+        self.assertIn("Cards n1 (0, 0, 240x120) and n2 (0, 120, 240x120)", resend[0])
+        self.assertEqual([i["level"] for i in left], ["warning", "warning"])
+
+    def test_job_resends_problems_until_clean(self):
+        with common.codex_jobs_lock:
+            common.codex_jobs["g1"] = common.new_job_state("g1", "make it", None, None)
+        common.run_generate_job("g1", "make it")
+        job = common.codex_jobs["g1"]
+        self.assertEqual((job["status"], job["output"]["attempts"], job["duration_ms"]), ("done", 2, 10))
+        self.assertEqual(job["output"]["issues"], [])
+        self.assertEqual(job["output"]["workflow"]["nodes"]["n2"]["type"], "sink")  # "out" renamed
+        self.assertEqual(self.calls[0], ("thread_start", {"model": common.CODEX_MODEL, "sandbox": common.Sandbox.read_only}))
+        self.assertIn("make it", self.calls[1][1])
+        self.assertIn('no input port "value"', self.calls[2][1])
+        self.assertIn("n2 sink, (300, 0), 240x200: [in] / []", self.calls[2][1])
+
+    def test_blank_request_is_400(self):
+        self.assertEqual(TestClient(api_server.app).post("/workflows/generate", json={"request": " "}).status_code, 400)
 
 
 if __name__ == "__main__":

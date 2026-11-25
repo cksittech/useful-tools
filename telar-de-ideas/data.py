@@ -46,6 +46,11 @@ class CodexJobRequest(BaseModel):
     operation_id: str | None = None
 
 
+# POST /workflows/generate request body: what the workflow should do, in plain words.
+class GenerateWorkflowRequest(BaseModel):
+    request: str
+
+
 # POST /open-path request body: an OS path to reveal in File Explorer.
 class OpenPathRequest(BaseModel):
     path: str
@@ -112,6 +117,44 @@ PLACEHOLDER_RE = re.compile(
 )
 # Just the {{a|b|c}} shuffle (common.resolve_shuffle).
 SHUFFLE_RE = re.compile(r"\{\{([^{}]*\|[^{}]*)\}\}")
+
+# --- Workflow generation (common.run_generate_job) ---------------------------------
+# Types Generate never places (the API's entry/exit).
+GENERATE_EXCLUDED_TYPES = ("apiInput", "apiResponse")
+# How the core types Generate may place work, for its prompt (plugin types send their source).
+GENERATE_CORE_NOTES = {
+    "group": (
+        "Runs several AI Nodes / Wrappers side by side with shared wiring. Members: wire this node's output"
+        ' "__ref" to each member\'s input "__trigger". Its ports are the members\' ports merged by label, and a'
+        ' Group port id IS that label (e.g. "name", "thread_id", "result"), not the member\'s port id. A wire into'
+        " a Group input feeds every member with that label; a wire from a Group output carries each member's"
+        " value. A Group can't be a member. Use it when several AI Nodes take the same inputs."
+    ),
+    "wrapper": (
+        'Retries one AI Node until its outputs meet conditions. Link: wire this node\'s output "__wrapperRef" to'
+        ' that AI Node\'s input "__trigger". Its ports are the linked AI Node\'s ports with the same ids (e.g.'
+        ' "string:name", "out_xxx"); wire the inputs and outputs to the Wrapper instead of the AI Node. After each'
+        " run, conditionGroups is checked: OR of groups, each an AND of conditions on the AI Node's outputs. Until"
+        " one group holds, the AI Node runs again, up to maxRetries more times (-1 = until Stop); outputs pass"
+        " downstream only once a group holds. Empty conditionGroups = always passes. A condition: key = the AI"
+        ' Node\'s output key ("out_xxx"); op eq/neq with value = comma-separated candidates, or gt/gte/lt/lte'
+        " with value = a number; total = compare the sum over all attempts instead of the latest value."
+        " A Wrapper can be a Group member."
+    ),
+}
+# Codex turns per job: the first plus resends with the check's problems.
+GENERATE_MAX_ATTEMPTS = 3
+# Grid and new-node sizes of index.html (data.js GRID_SIZE / TEMPLATE_DEFAULT_BODY_HEIGHT).
+GENERATE_GRID_SIZE = 20
+GENERATE_TEMPLATE_BODY_HEIGHT = 90
+# Card geometry for laying out (keep in sync with data.js NODE_WIDTH, PORT_ROW_H, MIN_BODY_HEIGHT;
+# chrome = 2 * NODE_BORDER + HEADER_H + NODE_FOOTER_H, see common.js gridAlignedBodyHeight).
+GENERATE_NODE_WIDTH = 240
+GENERATE_PORT_ROW_H = 26
+GENERATE_MIN_BODY_HEIGHT = 40
+GENERATE_CARD_CHROME = 52
+# Closest two generated cards may sit; nearer counts as overlapping (sent back to Codex).
+GENERATE_MIN_GAP = 20
 
 # --- Idempotent operations (common.run_once) ---------------------------------------
 # How long / how many first-call results are kept for replaying a resend.

@@ -442,6 +442,17 @@ class RunHelpersTest(unittest.TestCase):
         levels = common.node_levels_in_dependency_order(nodes, [edge("e1", "a", "out", "b", "x"), edge("e2", "b", "out", "a", "x")])
         self.assertEqual(levels, [["c"], ["a", "b"]])
 
+    def test_levels_wait_for_wrapped_and_member_ai_nodes(self):
+        nodes = {i: node(i, t) for i, t in (("w", "wrapper"), ("t", "template"), ("x", "template"),
+                                             ("g", "group"), ("m1", "template"), ("m2", "template"), ("y", "template"))}
+        edges = [edge("e1", "w", "__wrapperRef", "t", "__trigger"), edge("e2", "w", "out_a", "x", "string:a"),
+                 edge("e3", "g", "__ref", "m1", "__trigger"), edge("e4", "g", "__ref", "m2", "__trigger"),
+                 edge("e5", "g", "res", "y", "string:res")]
+        levels = common.node_levels_in_dependency_order(nodes, edges)
+        at = {k: i for i, level in enumerate(levels) for k in level}
+        self.assertGreater(at["x"], at["t"])
+        self.assertGreater(at["y"], max(at["m1"], at["m2"]))
+
     def test_short_value(self):
         self.assertEqual(common.short_value("abc"), "abc")
         self.assertEqual(common.short_value({"a": 1}), '{"a":1}')

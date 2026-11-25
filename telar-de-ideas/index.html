@@ -33,13 +33,14 @@
   </script>
   <script src="lib/reactflow.umd.js"></script>
   <script src="lib/material-ui.min.js"></script>
+  <script src="lib/babel.min.js"></script>
   <script src="lib/icons-data.js"></script>
   <script src="data.js"></script>
   <script src="common.js"></script>
 </head>
 <body>
   <div id="root"></div>
-  <script>
+  <script type="text/babel" data-presets="react">
     const {
       Box, AppBar, Toolbar, Typography, Button, IconButton, TextField,
       Select, MenuItem, FormControl, Paper, Divider, Fab, InputAdornment,
@@ -60,14 +61,13 @@
       useReactFlow, useUpdateNodeInternals,
     } = window.ReactFlow;
     const { useState, useRef, useEffect, useMemo, useCallback } = React;
-    const h = React.createElement;
 
     // Real Material Design icon paths (same set @mui/icons-material ships),
     // kept as a tiny local data file instead of pulling in the whole
     // icons-material package — see lib/icons-data.js. Each entry is one <path>.
     const ICON_PATHS = Object.fromEntries(window.MUI_ICONS.map(([name, svg]) => [name, svg.match(/ d="([^"]+)"/)[1]]));
     function Icon({ name, size = 20, style }) {
-      return h(SvgIcon, { sx: { fontSize: size, display: 'block' }, style }, h('path', { d: ICON_PATHS[name] }));
+      return <SvgIcon sx={{ fontSize: size, display: 'block' }} style={style}><path d={ICON_PATHS[name]} /></SvgIcon>;
     }
 
     // A row's connection dot over React Flow's <Handle> (which owns connecting);
@@ -75,38 +75,36 @@
     function PortHandle(props) {
       const { nodeId, port, isOutput, top, colorOverride, onContextMenu } = props;
       const color = colorOverride || PORT_UNCONNECTED_COLOR;
-      return h(Handle, {
-        type: isOutput ? 'source' : 'target',
-        position: isOutput ? Position.Right : Position.Left,
-        id: port.id,
-        onContextMenu: e => { e.preventDefault(); e.stopPropagation(); onContextMenu && onContextMenu(nodeId, port.id); },
-        style: {
+      return <Handle
+        type={isOutput ? 'source' : 'target'}
+        position={isOutput ? Position.Right : Position.Left}
+        id={port.id}
+        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onContextMenu && onContextMenu(nodeId, port.id); }}
+        style={{
           top, width: DOT_SIZE, height: DOT_SIZE, borderRadius: '50%',
           background: color, border: `2px solid ${PALETTE.common.white}`, boxShadow: '0 0 0 1px rgba(0,0,0,0.25)',
           pointerEvents: 'all', cursor: isOutput ? 'crosshair' : 'default',
-        },
-      });
+        }} />;
     }
 
     // Small square colored Button for header actions (stop/retry/delete/view).
     function HeaderActionButton(props) {
       const { color, variant, disabled, onClick, title, children } = props;
-      const btn = h(Button, {
-        size: 'small', color, variant: variant || 'contained', disabled,
-        className: 'nodrag',
-        onMouseDown: e => e.stopPropagation(),
-        onClick: e => { e.stopPropagation(); onClick(); },
-        sx: {
+      const btn = <Button
+        size="small" color={color} variant={variant || 'contained'} disabled={disabled}
+        className="nodrag"
+        onMouseDown={e => e.stopPropagation()}
+        onClick={e => { e.stopPropagation(); onClick(); }}
+        sx={{
           minWidth: 24, width: 24, height: 22, p: 0, fontSize: 12, lineHeight: 1, boxShadow: 'none', '&:hover': { boxShadow: 'none' },
           // A disabled contained button's default dark fill nearly
           // vanishes against these colored headers — fade to a light
           // translucent chip instead.
           '&.Mui-disabled': { bgcolor: 'rgba(255,255,255,0.25)', color: 'rgba(255,255,255,0.65)' },
-        },
-      }, children);
+        }}>{children}</Button>;
       // Tooltip needs a ref-forwarding child; a disabled Button won't fire
       // hover events, so wrap it in a span when disabled.
-      return h(Tooltip, { title }, disabled ? h('span', null, btn) : btn);
+      return <Tooltip title={title}>{disabled ? <span>{btn}</span> : btn}</Tooltip>;
     }
 
     // Shows exactly what was sent to Codex (prompt + output schema) and
@@ -117,54 +115,52 @@
       const res = node && node.data.lastResponse;
       const prev = node && node.data.previousRun;
       const isRunning = node && (node.data.runStatus === 'running' || node.data.runStatus === 'starting');
-      return h(Dialog, { open, onClose, maxWidth: 'sm', fullWidth: true },
-        h(DialogTitle, null, 'Node Details'),
-        h(DialogContent, { dividers: true },
-          h(Typography, { variant: 'overline', color: 'text.secondary', sx: { display: 'block' } }, 'Request'),
-          req
-            ? h(Box, { sx: { mb: 2 } },
-                h(Typography, { variant: 'body2', sx: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', mb: req.outputSchema ? 1 : 0 } }, req.prompt),
-                req.outputSchema && h(Box, { sx: { bgcolor: 'grey.100', borderRadius: 1, p: 1 } },
-                  h(Typography, { variant: 'caption', color: 'text.secondary', sx: { display: 'block', mb: 0.5 } }, 'Output Schema'),
-                  h(Typography, {
-                    variant: 'body2', component: 'pre',
-                    sx: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', m: 0, fontFamily: 'monospace', fontSize: 12 },
-                  }, JSON.stringify(req.outputSchema, null, 2))
-                )
-              )
-            : h(Typography, { variant: 'body2', color: 'text.secondary', sx: { mb: 2 } }, '(not run yet)'),
-          h(Typography, { variant: 'overline', color: 'text.secondary', sx: { display: 'block' } }, 'Response'),
-          isRunning
-            ? h(LinearProgress, { sx: { mt: 1 } })
-            : h(Typography, {
-                variant: 'body2', component: 'pre',
-                sx: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', m: 0, fontFamily: 'monospace', fontSize: 12 },
-              }, (res && res.raw) || '(no response)'),
-          // The attempt before the latest one (e.g. the run a Wrapper retry replaced).
-          prev && h(Box, { sx: { mt: 2, pt: 1, borderTop: '1px solid', borderColor: 'divider' } },
-            h(Typography, { variant: 'overline', color: 'text.secondary', sx: { display: 'block' } }, 'Previous Response'),
-            h(Typography, { variant: 'caption', color: prev.runStatus === 'done' ? 'text.secondary' : 'error', sx: { display: 'block', mb: 0.5 } },
-              [prev.runStatus || 'unknown', prev.response && prev.response.threadId, prev.runError].filter(Boolean).join(' · ')),
-            h(Typography, {
-              variant: 'body2', component: 'pre',
-              sx: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', m: 0, fontFamily: 'monospace', fontSize: 12 },
-            }, (prev.response && prev.response.raw) || '(no response)')
-          )
-        ),
-        h(DialogActions, null, h(Button, { onClick: onClose }, 'Close'))
-      );
+      return <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth={true}>
+        <DialogTitle>Node Details</DialogTitle>
+        <DialogContent dividers={true}>
+          <Typography variant="overline" color="text.secondary" sx={{ display: 'block' }}>Request</Typography>
+          {req
+            ? <Box sx={{ mb: 2 }}>
+                <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', mb: req.outputSchema ? 1 : 0 }}>{req.prompt}</Typography>
+                {req.outputSchema && <Box sx={{ bgcolor: 'grey.100', borderRadius: 1, p: 1 }}>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>Output Schema</Typography>
+                  <Typography
+                    variant="body2" component="pre"
+                    sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', m: 0, fontFamily: 'monospace', fontSize: 12 }}>{JSON.stringify(req.outputSchema, null, 2)}</Typography>
+                </Box>}
+            </Box>
+            : <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>(not run yet)</Typography>}
+          <Typography variant="overline" color="text.secondary" sx={{ display: 'block' }}>Response</Typography>
+          {isRunning
+            ? <LinearProgress sx={{ mt: 1 }} />
+            : <Typography
+                variant="body2" component="pre"
+                sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', m: 0, fontFamily: 'monospace', fontSize: 12 }}>{(res && res.raw) || '(no response)'}</Typography>}
+          {/* The attempt before the latest one (e.g. the run a Wrapper retry replaced). */}
+          {prev && <Box sx={{ mt: 2, pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
+            <Typography variant="overline" color="text.secondary" sx={{ display: 'block' }}>Previous Response</Typography>
+            <Typography variant="caption" color={prev.runStatus === 'done' ? 'text.secondary' : 'error'} sx={{ display: 'block', mb: 0.5 }}>
+              {[prev.runStatus || 'unknown', prev.response && prev.response.threadId, prev.runError].filter(Boolean).join(' · ')}
+            </Typography>
+            <Typography
+              variant="body2" component="pre"
+              sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', m: 0, fontFamily: 'monospace', fontSize: 12 }}>{(prev.response && prev.response.raw) || '(no response)'}</Typography>
+          </Box>}
+        </DialogContent>
+        <DialogActions><Button onClick={onClose}>Close</Button></DialogActions>
+      </Dialog>;
     }
 
     // Shared "one-line error message" look — every node type's transient
     // failure text renders identically instead of each inventing its own
     // Typography/color/truncation combo.
     function ErrorText({ children }) {
-      return h(Typography, { variant: 'caption', color: 'error', sx: { wordBreak: 'break-all' } }, children);
+      return <Typography variant="caption" color="error" sx={{ wordBreak: 'break-all' }}>{children}</Typography>;
     }
 
     // Shared vertical layout for multi-control bodies.
     function BodyStack({ children }) {
-      return h(Box, { sx: { display: 'flex', flexDirection: 'column', gap: 1 } }, children);
+      return <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>{children}</Box>;
     }
 
     // ---- Card body widgets ----
@@ -174,42 +170,44 @@
     const DARK_BOX_SX = { bgcolor: 'grey.900', color: 'common.white', borderRadius: 1, p: 1, wordBreak: 'break-all', fontFamily: 'monospace', fontSize: 13 };
 
     function chipOf(w, key) {
-      return h(Chip, {
-        key, size: 'small', color: w.color || 'default', variant: w.variant || 'filled', label: w.label,
-        sx: { alignSelf: 'flex-start' },
-        icon: w.icon ? h(Icon, { name: w.icon, size: 16, style: { color: 'inherit' } }) : undefined,
-      });
+      return <Chip
+        key={key} size="small" color={w.color || 'default'} variant={w.variant || 'filled'} label={w.label}
+        sx={{ alignSelf: 'flex-start' }}
+        icon={w.icon ? <Icon name={w.icon} size={16} style={{ color: 'inherit' }} /> : undefined} />;
     }
 
     const BODY_WIDGETS = {
-      caption: w => h(Typography, { variant: 'caption', color: CAPTION_COLORS[w.color] || 'text.secondary' }, w.text),
+      caption: w => <Typography variant="caption" color={CAPTION_COLORS[w.color] || 'text.secondary'}>{w.text}</Typography>,
       chip: w => chipOf(w),
-      chips: w => h(Box, { sx: { display: 'flex', flexWrap: 'wrap', gap: 0.5 } },
-        (w.items || []).length
+      chips: w => <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+        {(w.items || []).length
           ? w.items.map((c, i) => chipOf(c, i))
-          : w.empty && h(Typography, { variant: 'caption', color: 'text.secondary' }, w.empty)),
-      value: w => h(Box, { sx: { ...DARK_BOX_SX, minHeight: 40 } }, w.text),
-      pairs: w => h(Box, { sx: { ...DARK_BOX_SX, display: 'flex', flexDirection: 'column', gap: 0.5 } },
-        (w.rows || []).map((r, i) => h(Box, { key: i },
-          h(Box, { component: 'span', sx: { color: colors.blue[200] } }, `${r.name}: `), r.value))),
-      path: w => h(Box, { sx: { bgcolor: 'grey.100', borderRadius: 1, p: 1, wordBreak: 'break-all' } },
-        w.text === undefined
-          ? h(Typography, { variant: 'caption', color: 'text.secondary' }, w.empty)
-          : h(Typography, { variant: 'caption', sx: { fontFamily: 'monospace', wordBreak: 'break-all' } }, w.text)),
-      open: (w, { id, data }) => h(Button, {
-        size: 'small', variant: 'outlined', className: 'nodrag',
-        onClick: () => data.onOpenPath(id, w.path),
-      }, w.label),
-      error: w => h(ErrorText, null, w.text),
-      alert: w => h(Alert, { severity: w.severity || 'error', variant: 'outlined', sx: { py: 0 } }, w.text),
+          : w.empty && <Typography variant="caption" color="text.secondary">{w.empty}</Typography>}
+      </Box>,
+      value: w => <Box sx={{ ...DARK_BOX_SX, minHeight: 40 }}>{w.text}</Box>,
+      pairs: w => <Box sx={{ ...DARK_BOX_SX, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+        {(w.rows || []).map((r, i) => <Box key={i}>
+          <Box component="span" sx={{ color: colors.blue[200] }}>{`${r.name}: `}</Box>{r.value}
+        </Box>)}
+      </Box>,
+      path: w => <Box sx={{ bgcolor: 'grey.100', borderRadius: 1, p: 1, wordBreak: 'break-all' }}>
+        {w.text === undefined
+          ? <Typography variant="caption" color="text.secondary">{w.empty}</Typography>
+          : <Typography variant="caption" sx={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>{w.text}</Typography>}
+      </Box>,
+      open: (w, { id, data }) => <Button
+        size="small" variant="outlined" className="nodrag"
+        onClick={() => data.onOpenPath(id, w.path)}>{w.label}</Button>,
+      error: w => <ErrorText>{w.text}</ErrorText>,
+      alert: w => <Alert severity={w.severity || 'error'} variant="outlined" sx={{ py: 0 }}>{w.text}</Alert>,
     };
 
     function WidgetBody({ widgets, id, data }) {
       if (!widgets || !widgets.length) return null;
-      return h(BodyStack, null, widgets.map((w, i) => {
+      return <BodyStack>{widgets.map((w, i) => {
         const render = BODY_WIDGETS[w.kind];
-        return render ? h(React.Fragment, { key: i }, render(w, { id, data })) : null;
-      }));
+        return render ? <React.Fragment key={i}>{render(w, { id, data })}</React.Fragment> : null;
+      })}</BodyStack>;
     }
 
     // ---- Edit-panel fields ----
@@ -220,25 +218,24 @@
       const common = { size: 'small', fullWidth: true, variant: 'outlined', disabled, autoFocus };
       switch (field.kind) {
         case 'text':
-          return h(TextField, {
-            ...common, label: field.label, placeholder: field.placeholder, helperText: field.helper,
-            multiline: !!field.multiline, minRows: field.multiline ? (field.rows || 1) : undefined,
-            value: value ?? '', onChange: e => onChange(e.target.value),
-          });
+          return <TextField
+            {...common} label={field.label} placeholder={field.placeholder} helperText={field.helper}
+            multiline={!!field.multiline} minRows={field.multiline ? (field.rows || 1) : undefined}
+            value={value ?? ''} onChange={e => onChange(e.target.value)} />;
         case 'number':
-          return h(TextField, {
-            ...common, label: field.label, type: 'number', helperText: field.helper,
-            value: value ?? field.default ?? '', onChange: e => onChange(numberFieldValue(field, e.target.value)),
-          });
+          return <TextField
+            {...common} label={field.label} type="number" helperText={field.helper}
+            value={value ?? field.default ?? ''} onChange={e => onChange(numberFieldValue(field, e.target.value))} />;
         case 'select':
-          return h(FormControl, { size: 'small', fullWidth: true, disabled },
-            h(Select, { value: value ?? field.default ?? '', onChange: e => onChange(e.target.value) },
-              (field.options || []).map(o => h(MenuItem, { key: String(o.value), value: o.value }, o.label))));
+          return <FormControl size="small" fullWidth={true} disabled={disabled}>
+            <Select value={value ?? field.default ?? ''} onChange={e => onChange(e.target.value)}>
+              {(field.options || []).map(o => <MenuItem key={String(o.value)} value={o.value}>{o.label}</MenuItem>)}
+            </Select>
+          </FormControl>;
         case 'toggle':
-          return h(ToggleButtonGroup, {
-            size: 'small', exclusive: true, disabled, value: value ?? field.default ?? null,
-            onChange: (e, next) => { if (next !== null) onChange(next); },
-          }, (field.options || []).map(o => h(ToggleButton, { key: String(o.value), value: o.value }, o.label)));
+          return <ToggleButtonGroup
+            size="small" exclusive={true} disabled={disabled} value={value ?? field.default ?? null}
+            onChange={(e, next) => { if (next !== null) onChange(next); }}>{(field.options || []).map(o => <ToggleButton key={String(o.value)} value={o.value}>{o.label}</ToggleButton>)}</ToggleButtonGroup>;
         default:
           return null;
       }
@@ -248,69 +245,67 @@
     function ListField({ field, value, onChange, disabled }) {
       const list = Array.isArray(value) && value.length ? value : (field.keepOne ? [''] : []);
       const set = next => onChange(next.length || !field.keepOne ? next : ['']);
-      return h(BodyStack, null,
-        list.map((v, i) => h(Box, { key: i, sx: { display: 'flex', alignItems: 'center', gap: 0.5 } },
-          h(TextField, {
-            size: 'small', variant: 'outlined', fullWidth: true, disabled, placeholder: field.placeholder,
-            value: v, onChange: e => set(list.map((val, j) => (j === i ? e.target.value : val))),
-          }),
-          h(IconButton, { size: 'small', disabled: disabled || (field.keepOne && list.length <= 1), onClick: () => set(list.filter((_, j) => j !== i)) },
-            h(Icon, { name: 'Close', size: 14 }))
-        )),
-        h(Button, { size: 'small', variant: 'outlined', disabled, onClick: () => set([...list, '']) }, field.addLabel || '+ Add')
-      );
+      return <BodyStack>
+        {list.map((v, i) => <Box key={i} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+          <TextField
+            size="small" variant="outlined" fullWidth={true} disabled={disabled} placeholder={field.placeholder}
+            value={v} onChange={e => set(list.map((val, j) => (j === i ? e.target.value : val)))} />
+          <IconButton size="small" disabled={disabled || (field.keepOne && list.length <= 1)} onClick={() => set(list.filter((_, j) => j !== i))}>
+            <Icon name="Close" size={14} />
+          </IconButton>
+        </Box>)}
+        <Button size="small" variant="outlined" disabled={disabled} onClick={() => set([...list, ''])}>{field.addLabel || '+ Add'}</Button>
+      </BodyStack>;
     }
 
     // A list of objects, one bordered box of sub-fields each (the first one gets the remove button).
     function RecordsField({ field, value, onChange, disabled }) {
       const list = Array.isArray(value) ? value : [];
       const setAt = (i, patch) => onChange(list.map((r, j) => (j === i ? { ...r, ...patch } : r)));
-      return h(BodyStack, null,
-        list.map((rec, i) => h(Box, { key: i, sx: { display: 'flex', flexDirection: 'column', gap: 1, p: 1, border: 1, borderColor: 'divider', borderRadius: 1 } },
-          (field.fields || []).map((sub, k) => {
-            const control = h(FieldControl, {
-              field: sub, value: (rec || {})[sub.key], disabled, onChange: v => setAt(i, { [sub.key]: v }),
-            });
-            return k > 0 ? h(React.Fragment, { key: k }, control) : h(Box, { key: k, sx: { display: 'flex', alignItems: 'center', gap: 0.5 } },
-              control,
-              h(IconButton, { size: 'small', disabled, onClick: () => onChange(list.filter((_, j) => j !== i)) }, h(Icon, { name: 'Close', size: 14 })));
-          })
-        )),
-        h(Button, {
-          size: 'small', variant: 'outlined', disabled,
-          onClick: () => onChange([...list, JSON.parse(JSON.stringify(field.newItem || {}))]),
-        }, field.addLabel || '+ Add')
-      );
+      return <BodyStack>
+        {list.map((rec, i) => <Box key={i} sx={{ display: 'flex', flexDirection: 'column', gap: 1, p: 1, border: 1, borderColor: 'divider', borderRadius: 1 }}>
+          {(field.fields || []).map((sub, k) => {
+            const control = <FieldControl
+              field={sub} value={(rec || {})[sub.key]} disabled={disabled} onChange={v => setAt(i, { [sub.key]: v })} />;
+            return k > 0 ? <React.Fragment key={k}>{control}</React.Fragment> : <Box key={k} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              {control}
+              <IconButton size="small" disabled={disabled} onClick={() => onChange(list.filter((_, j) => j !== i))}><Icon name="Close" size={14} /></IconButton>
+            </Box>;
+          })}
+        </Box>)}
+        <Button
+          size="small" variant="outlined" disabled={disabled}
+          onClick={() => onChange([...list, JSON.parse(JSON.stringify(field.newItem || {}))])}>{field.addLabel || '+ Add'}</Button>
+      </BodyStack>;
     }
 
     function FieldsForm({ node, fields, updateData, isRunningWorkflow }) {
       const disabled = isRunningWorkflow;
       let focused = false;
-      return h(BodyStack, null, fields.map((field, i) => {
+      return <BodyStack>{fields.map((field, i) => {
         if (field.kind === 'caption') {
-          return h(Typography, { key: i, variant: 'caption', color: 'text.secondary' }, field.text);
+          return <Typography key={i} variant="caption" color="text.secondary">{field.text}</Typography>;
         }
         if (field.kind === 'button') {
-          return h(Button, {
-            key: i, size: 'small', variant: 'outlined', color: field.color || 'primary', disabled,
-            onClick: () => {
+          return <Button
+            key={i} size="small" variant="outlined" color={field.color || 'primary'} disabled={disabled}
+            onClick={() => {
               const patch = JSON.parse(JSON.stringify(field.set || {}));
               (field.unset || []).forEach(k => { patch[k] = undefined; });
               updateData(node.id, patch);
-            },
-          }, field.label);
+            }}>{field.label}</Button>;
         }
         const props = {
           key: i, field, disabled, value: node.data[field.key],
           onChange: v => updateData(node.id, fieldPatch(field, v)),
         };
-        if (field.kind === 'list') return h(ListField, props);
-        if (field.kind === 'records') return h(RecordsField, props);
+        if (field.kind === 'list') return <ListField {...props} />;
+        if (field.kind === 'records') return <RecordsField {...props} />;
         // The first plain input gets the focus when the panel opens.
         const autoFocus = !focused && (field.kind === 'text' || field.kind === 'number');
         if (autoFocus) focused = true;
-        return h(FieldControl, { ...props, autoFocus });
-      }));
+        return <FieldControl {...props} autoFocus={autoFocus} />;
+      })}</BodyStack>;
     }
 
     // Wrapper (core type, CUSTOM_FORM "wrapper"): condition groups appear once a
@@ -340,61 +335,59 @@
         setGroups(groups.filter((_, i) => i !== gi));
       }
 
-      return h(BodyStack, null,
-        h(RetriesField, {
-          disabled: isRunningWorkflow,
-          value: node.data.maxRetries != null ? node.data.maxRetries : 3,
-          onChange: v => updateData(node.id, { maxRetries: v }),
-        }),
-        !linkedNode
-          ? h(Typography, { variant: 'caption', color: 'text.secondary' },
-              'Link an AI Node via the Ref dot below to set output conditions.')
+      return <BodyStack>
+        <RetriesField
+          disabled={isRunningWorkflow}
+          value={node.data.maxRetries != null ? node.data.maxRetries : 3}
+          onChange={v => updateData(node.id, { maxRetries: v })} />
+        {!linkedNode
+          ? <Typography variant="caption" color="text.secondary">
+              Link an AI Node via the Ref dot below to set output conditions.
+          </Typography>
           : outputFields.length === 0
-            ? h(Typography, { variant: 'caption', color: 'text.secondary' }, '(linked node defines no outputs)')
-            : h(BodyStack, null,
-                groups.length === 0 && h(Typography, { variant: 'caption', color: 'text.secondary' },
-                  'No conditions — always considered passed.'),
-                groups.map((group, gi) => h(Box, {
-                  key: gi,
-                  sx: { border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 0.75, display: 'flex', flexDirection: 'column', gap: 0.5 },
-                },
-                  gi > 0 && h(Typography, { variant: 'caption', color: 'text.secondary', sx: { fontWeight: 'bold' } }, 'OR'),
-                  group.map((cond, ci) => h(Box, { key: ci, sx: { display: 'flex', alignItems: 'center', gap: 0.5 } },
-                    h(Select, {
-                      size: 'small', value: cond.key, disabled: isRunningWorkflow, sx: { minWidth: 0, flex: 1 },
-                      onChange: e => updateCond(gi, ci, { key: e.target.value }),
-                    },
-                      outputFields.map(o => h(MenuItem, { key: o.key, value: o.key }, o.name || o.key))
-                    ),
-                    // Σ: compare the sum over this Wrapper's attempts (first run + retries).
-                    h(Tooltip, { title: cond.total ? 'Comparing the total across attempts' : 'Comparing this attempt\'s value (click for the total)' },
-                      h(ToggleButton, {
-                        value: 'total', size: 'small', selected: !!cond.total, disabled: isRunningWorkflow,
-                        sx: { px: 0.75, py: 0.25, minWidth: 0 },
-                        onChange: () => updateCond(gi, ci, { total: !cond.total }),
-                      }, 'Σ')),
-                    h(Select, {
-                      size: 'small', value: cond.op, disabled: isRunningWorkflow, sx: { minWidth: 56 },
-                      onChange: e => updateCond(gi, ci, { op: e.target.value }),
-                    },
-                      WRAPPER_CONDITION_OPS.map(op => h(MenuItem, { key: op, value: op }, WRAPPER_OP_LABELS[op]))
-                    ),
-                    h(TextField, {
-                      size: 'small', variant: 'outlined', disabled: isRunningWorkflow, sx: { flex: 1, minWidth: 0 },
-                      placeholder: (cond.op === 'eq' || cond.op === 'neq') ? 'value(s), comma-separated' : 'number',
-                      value: cond.value, onChange: e => updateCond(gi, ci, { value: e.target.value }),
-                    }),
-                    h(IconButton, { size: 'small', disabled: isRunningWorkflow, onClick: () => removeCond(gi, ci) },
-                      h(Icon, { name: 'Close', size: 14 }))
-                  )),
-                  h(Box, { sx: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-                    h(Button, { size: 'small', disabled: isRunningWorkflow, onClick: () => addCond(gi) }, '+ AND Condition'),
-                    h(Button, { size: 'small', color: 'error', disabled: isRunningWorkflow, onClick: () => removeGroup(gi) }, 'Remove Group')
-                  )
-                )),
-                h(Button, { size: 'small', variant: 'outlined', disabled: isRunningWorkflow, onClick: addGroup }, '+ OR Group')
-              )
-      );
+            ? <Typography variant="caption" color="text.secondary">(linked node defines no outputs)</Typography>
+            : <BodyStack>
+                {groups.length === 0 && <Typography variant="caption" color="text.secondary">
+                  No conditions — always considered passed.
+                </Typography>}
+                {groups.map((group, gi) => <Box
+                  key={gi}
+                  sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 0.75, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                  {gi > 0 && <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 'bold' }}>OR</Typography>}
+                  {group.map((cond, ci) => <Box key={ci} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <Select
+                      size="small" value={cond.key} disabled={isRunningWorkflow} sx={{ minWidth: 0, flex: 1 }}
+                      onChange={e => updateCond(gi, ci, { key: e.target.value })}>
+                      {outputFields.map(o => <MenuItem key={o.key} value={o.key}>{o.name || o.key}</MenuItem>)}
+                    </Select>
+                    {/* Σ: compare the sum over this Wrapper's attempts (first run + retries). */}
+                    <Tooltip title={cond.total ? 'Comparing the total across attempts' : 'Comparing this attempt\'s value (click for the total)'}>
+                      <ToggleButton
+                        value="total" size="small" selected={!!cond.total} disabled={isRunningWorkflow}
+                        sx={{ px: 0.75, py: 0.25, minWidth: 0 }}
+                        onChange={() => updateCond(gi, ci, { total: !cond.total })}>Σ</ToggleButton>
+                    </Tooltip>
+                    <Select
+                      size="small" value={cond.op} disabled={isRunningWorkflow} sx={{ minWidth: 56 }}
+                      onChange={e => updateCond(gi, ci, { op: e.target.value })}>
+                      {WRAPPER_CONDITION_OPS.map(op => <MenuItem key={op} value={op}>{WRAPPER_OP_LABELS[op]}</MenuItem>)}
+                    </Select>
+                    <TextField
+                      size="small" variant="outlined" disabled={isRunningWorkflow} sx={{ flex: 1, minWidth: 0 }}
+                      placeholder={(cond.op === 'eq' || cond.op === 'neq') ? 'value(s), comma-separated' : 'number'}
+                      value={cond.value} onChange={e => updateCond(gi, ci, { value: e.target.value })} />
+                    <IconButton size="small" disabled={isRunningWorkflow} onClick={() => removeCond(gi, ci)}>
+                      <Icon name="Close" size={14} />
+                    </IconButton>
+                  </Box>)}
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Button size="small" disabled={isRunningWorkflow} onClick={() => addCond(gi)}>+ AND Condition</Button>
+                    <Button size="small" color="error" disabled={isRunningWorkflow} onClick={() => removeGroup(gi)}>Remove Group</Button>
+                  </Box>
+                </Box>)}
+                <Button size="small" variant="outlined" disabled={isRunningWorkflow} onClick={addGroup}>+ OR Group</Button>
+            </BodyStack>}
+      </BodyStack>;
     }
 
     // CUSTOM_FORM name -> edit form, for core types whose form needs other nodes.
@@ -431,45 +424,42 @@
         const inp = def.inputs[i];
         const out = def.outputs[i];
         const top = HEADER_H + i * PORT_ROW_H + PORT_ROW_H / 2;
-        rows.push(h(Box, { key: i, sx: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: PORT_ROW_H } },
-          inp
-            ? h(Box, { sx: { display: 'flex', alignItems: 'center', gap: 0.5, pl: '4px' } },
-                h(PortHandle, {
-                  nodeId: id, port: inp, isOutput: false, top, onContextMenu: data.onPortContextMenu,
-                  colorOverride: data.connectedPorts && data.connectedPorts.has(id + ':' + inp.id + ':in')
-                    ? PORT_CONNECTED_COLOR : PORT_UNCONNECTED_COLOR,
-                }),
-                h(Typography, { variant: 'caption', color: 'text.secondary', sx: { pl: 1.5 } }, inp.label)
-              )
-            : h(Box, null),
-          out
-            ? h(Box, { sx: { display: 'flex', alignItems: 'center', gap: 0.5, pr: '4px' } },
-                h(Typography, {
-                  variant: 'caption',
+        rows.push(<Box key={i} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: PORT_ROW_H }}>
+          {inp
+            ? <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, pl: '4px' }}>
+                <PortHandle
+                  nodeId={id} port={inp} isOutput={false} top={top} onContextMenu={data.onPortContextMenu}
+                  colorOverride={data.connectedPorts && data.connectedPorts.has(id + ':' + inp.id + ':in')
+                    ? PORT_CONNECTED_COLOR : PORT_UNCONNECTED_COLOR} />
+                <Typography variant="caption" color="text.secondary" sx={{ pl: 1.5 }}>{inp.label}</Typography>
+            </Box>
+            : <Box />}
+          {out
+            ? <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, pr: '4px' }}>
+                <Typography
+                  variant="caption"
                   // The default thread_id output is called out visually
                   // (blue, uppercase) to set it apart from user-defined outputs.
-                  color: out.id === THREAD_ID_OUTPUT_KEY ? 'primary.main' : 'text.secondary',
-                  sx: {
+                  color={out.id === THREAD_ID_OUTPUT_KEY ? 'primary.main' : 'text.secondary'}
+                  sx={{
                     pr: 1.5,
                     ...(out.id === THREAD_ID_OUTPUT_KEY ? { textTransform: 'uppercase', fontWeight: 'bold' } : null),
-                  },
-                }, out.label),
-                h(PortHandle, {
-                  nodeId: id, port: out, isOutput: true, top, onContextMenu: data.onPortContextMenu,
-                  colorOverride: out.type === 'trigger' ? TRIGGER_COLOR
+                  }}>{out.label}</Typography>
+                <PortHandle
+                  nodeId={id} port={out} isOutput={true} top={top} onContextMenu={data.onPortContextMenu}
+                  colorOverride={out.type === 'trigger' ? TRIGGER_COLOR
                     : (data.connectedPorts && data.connectedPorts.has(id + ':' + out.id + ':out')
-                        ? PORT_CONNECTED_COLOR : PORT_UNCONNECTED_COLOR),
-                })
-              )
-            : h(Box, null)
-        ));
+                        ? PORT_CONNECTED_COLOR : PORT_UNCONNECTED_COLOR)} />
+            </Box>
+            : <Box />}
+        </Box>);
       }
 
-      const body = h(WidgetBody, { widgets: data.__view && data.__view.body, id, data });
+      const body = <WidgetBody widgets={data.__view && data.__view.body} id={id} data={data} />;
 
-      const cardEl = h(Paper, {
-        elevation: selected ? 6 : 2,
-        sx: {
+      const cardEl = <Paper
+        elevation={selected ? 6 : 2}
+        sx={{
           // border-box + a fixed-width border keep the outer size exactly
           // nodeWidth x grid-aligned height in every state; the thicker
           // running/passed ring is an outline, which takes no layout space.
@@ -480,14 +470,13 @@
           borderRadius: '10px',
           userSelect: 'none',
           animation: isCardRunning ? 'nodeRunningBlink 1s ease-in-out infinite' : 'none',
-        },
-      },
-        // Trigger dot. On a Wrapper it only lets a Group's Ref port make it a member —
-        // a Wrapper itself is never run or gated.
-        (type === 'template' || type === 'wrapper') && h(Handle, {
-          type: 'target', position: Position.Top, id: TRIGGER_PORT_ID,
-          onContextMenu: e => { e.preventDefault(); e.stopPropagation(); data.onPortContextMenu(id, TRIGGER_PORT_ID); },
-          style: {
+        }}>
+        {/* Trigger dot. On a Wrapper it only lets a Group's Ref port make it a member — */}
+        {/* a Wrapper itself is never run or gated. */}
+        {(type === 'template' || type === 'wrapper') && <Handle
+          type="target" position={Position.Top} id={TRIGGER_PORT_ID}
+          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); data.onPortContextMenu(id, TRIGGER_PORT_ID); }}
+          style={{
             width: DOT_SIZE, height: DOT_SIZE, borderRadius: '50%',
             background: (data.connectedPorts && data.connectedPorts.has(id + ':' + TRIGGER_PORT_ID + ':in')) ? TRIGGER_COLOR : PORT_UNCONNECTED_COLOR,
             border: `2px solid ${PALETTE.common.white}`, boxShadow: '0 0 0 1px rgba(0,0,0,0.25)',
@@ -498,82 +487,76 @@
             // drag started from dead-center resizes the node instead of
             // starting a connection.
             pointerEvents: 'all', cursor: 'default', top: -1, zIndex: 2,
-          },
-        }),
-        // Group's Ref dot (membership, no signal) — at the bottom so it doesn't read as a trigger input.
-        type === 'group' && h(Handle, {
-          type: 'source', position: Position.Bottom, id: GROUP_REF_PORT_ID,
-          onContextMenu: e => { e.preventDefault(); e.stopPropagation(); data.onPortContextMenu(id, GROUP_REF_PORT_ID); },
-          style: {
+          }} />}
+        {/* Group's Ref dot (membership, no signal) — at the bottom so it doesn't read as a trigger input. */}
+        {type === 'group' && <Handle
+          type="source" position={Position.Bottom} id={GROUP_REF_PORT_ID}
+          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); data.onPortContextMenu(id, GROUP_REF_PORT_ID); }}
+          style={{
             width: DOT_SIZE, height: DOT_SIZE, borderRadius: '50%',
             background: (data.connectedPorts && data.connectedPorts.has(id + ':' + GROUP_REF_PORT_ID + ':out')) ? GROUP_REF_COLOR : PORT_UNCONNECTED_COLOR,
             border: `2px solid ${PALETTE.common.white}`, boxShadow: '0 0 0 1px rgba(0,0,0,0.25)',
             pointerEvents: 'all', cursor: 'default', bottom: -1, zIndex: 2,
-          },
-        }),
-        // Wrapper's linking control — same idea as Group's Ref dot, just
-        // 1:1 (see wrapperLinkedNodeId, common.js) instead of many.
-        type === 'wrapper' && h(Handle, {
-          type: 'source', position: Position.Bottom, id: WRAPPER_REF_PORT_ID,
-          onContextMenu: e => { e.preventDefault(); e.stopPropagation(); data.onPortContextMenu(id, WRAPPER_REF_PORT_ID); },
-          style: {
+          }} />}
+        {/* Wrapper's linking control — same idea as Group's Ref dot, just */}
+        {/* 1:1 (see wrapperLinkedNodeId, common.js) instead of many. */}
+        {type === 'wrapper' && <Handle
+          type="source" position={Position.Bottom} id={WRAPPER_REF_PORT_ID}
+          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); data.onPortContextMenu(id, WRAPPER_REF_PORT_ID); }}
+          style={{
             width: DOT_SIZE, height: DOT_SIZE, borderRadius: '50%',
             background: (data.connectedPorts && data.connectedPorts.has(id + ':' + WRAPPER_REF_PORT_ID + ':out')) ? WRAPPER_REF_COLOR : PORT_UNCONNECTED_COLOR,
             border: `2px solid ${PALETTE.common.white}`, boxShadow: '0 0 0 1px rgba(0,0,0,0.25)',
             pointerEvents: 'all', cursor: 'default', bottom: -1, zIndex: 2,
-          },
-        }),
-        h(Box, {
-          sx: { height: HEADER_H, bgcolor: (data.__typeInfo && data.__typeInfo.color) || 'grey.500', display: 'flex', alignItems: 'center', justifyContent: 'space-between', px: 1, borderTopLeftRadius: '8px', borderTopRightRadius: '8px' },
-        },
-          h(Typography, {
-            variant: 'body2',
-            sx: { color: 'common.white', fontWeight: 'bold', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-          },
-            def.title,
-            data.threadId && [
+          }} />}
+        <Box
+          sx={{ height: HEADER_H, bgcolor: (data.__typeInfo && data.__typeInfo.color) || 'grey.500', display: 'flex', alignItems: 'center', justifyContent: 'space-between', px: 1, borderTopLeftRadius: '8px', borderTopRightRadius: '8px' }}>
+          <Typography
+            variant="body2"
+            sx={{ color: 'common.white', fontWeight: 'bold', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {def.title}
+            {data.threadId && [
               ' (',
-              h(Link, {
-                key: 'tid', component: 'span', color: 'inherit', underline: 'always',
-                className: 'nodrag',
-                onMouseDown: e => e.stopPropagation(),
-                onClick: e => { e.stopPropagation(); data.onOpenPath(id, GENERATED_IMAGES_DIR + data.threadId); },
-                sx: { cursor: 'pointer' },
-              }, data.threadId),
+              <Link
+                key="tid" component="span" color="inherit" underline="always"
+                className="nodrag"
+                onMouseDown={e => e.stopPropagation()}
+                onClick={e => { e.stopPropagation(); data.onOpenPath(id, GENERATED_IMAGES_DIR + data.threadId); }}
+                sx={{ cursor: 'pointer' }}>{data.threadId}</Link>,
               ')',
-            ],
-            data.hasError ? ' ⚠' : ''
-          ),
-          h(Box, { sx: { display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 } },
-            // Pre-run check result / waiting reasons — plain strings (not
-            // arrays) so nodePropsEqual's reference check stays cheap.
-            data.__issueText && h(Tooltip, { title: h(Box, { component: 'span', sx: { whiteSpace: 'pre-line' } }, data.__issueText) },
-              h(Box, { 'data-testid': 'node-issue', sx: { color: data.__issueLevel === 'error' ? 'common.white' : colors.yellow[200], display: 'flex' } },
-                h(Icon, { name: data.__issueLevel === 'error' ? 'Error' : 'Warning', size: 16 }))),
-            data.__waitingText && h(Tooltip, { title: h(Box, { component: 'span', sx: { whiteSpace: 'pre-line' } }, data.__waitingText) },
-              h(Box, { 'data-testid': 'node-waiting', sx: { color: 'common.white', display: 'flex' } },
-                h(Icon, { name: 'HourglassEmpty', size: 16 }))),
-            type === 'template' && h(HeaderActionButton, {
-              color: 'info', title: 'View request & response',
-              onClick: () => setDetailOpen(true),
-            }, h(Icon, { name: 'Search', size: 14 })),
-            type === 'template' && h(HeaderActionButton, {
-              color: 'error', disabled: !isRunning,
-              onClick: () => data.onStopNode(id), title: 'Stop',
-            }, h(Icon, { name: 'Stop', size: 14 })),
-            type === 'template' && h(HeaderActionButton, {
-              color: 'primary', disabled: !canRetry,
-              onClick: () => data.onRetryNode(id), title: 'Retry',
-            }, h(Icon, { name: 'Replay', size: 14 })),
-            h(HeaderActionButton, {
-              color: 'error',
-              onClick: () => data.onDelete(id), title: 'Delete',
-            }, h(Icon, { name: 'Close', size: 14 }))
-          )
-        ),
-        h(Box, { sx: { px: 0 } }, rows),
-        h(Box, {
-          sx: {
+            ]}
+            {data.hasError ? ' ⚠' : ''}
+          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}>
+            {/* Pre-run check result / waiting reasons — plain strings (not */}
+            {/* arrays) so nodePropsEqual's reference check stays cheap. */}
+            {data.__issueText && <Tooltip title={<Box component="span" sx={{ whiteSpace: 'pre-line' }}>{data.__issueText}</Box>}>
+              <Box data-testid="node-issue" sx={{ color: data.__issueLevel === 'error' ? 'common.white' : colors.yellow[200], display: 'flex' }}>
+                <Icon name={data.__issueLevel === 'error' ? 'Error' : 'Warning'} size={16} />
+              </Box>
+            </Tooltip>}
+            {data.__waitingText && <Tooltip title={<Box component="span" sx={{ whiteSpace: 'pre-line' }}>{data.__waitingText}</Box>}>
+              <Box data-testid="node-waiting" sx={{ color: 'common.white', display: 'flex' }}>
+                <Icon name="HourglassEmpty" size={16} />
+              </Box>
+            </Tooltip>}
+            {type === 'template' && <HeaderActionButton
+              color="info" title={'View request & response'}
+              onClick={() => setDetailOpen(true)}><Icon name="Search" size={14} /></HeaderActionButton>}
+            {type === 'template' && <HeaderActionButton
+              color="error" disabled={!isRunning}
+              onClick={() => data.onStopNode(id)} title="Stop"><Icon name="Stop" size={14} /></HeaderActionButton>}
+            {type === 'template' && <HeaderActionButton
+              color="primary" disabled={!canRetry}
+              onClick={() => data.onRetryNode(id)} title="Retry"><Icon name="Replay" size={14} /></HeaderActionButton>}
+            <HeaderActionButton
+              color="error"
+              onClick={() => data.onDelete(id)} title="Delete"><Icon name="Close" size={14} /></HeaderActionButton>
+          </Box>
+        </Box>
+        <Box sx={{ px: 0 }}>{rows}</Box>
+        <Box
+          sx={{
             p: 1, display: 'flex', flexDirection: 'column',
             // Fixed, state-driven height (never CSS 'auto') — letting box
             // size passively track DOM content meant a batch of
@@ -584,28 +567,27 @@
             // itself scrolls (overflow: auto below) if its content overflows.
             height: gridAlignedBodyHeight(data.__bodyHeight, maxRows),
             overflow: 'auto',
-          },
-        }, body),
-        // Always mounted at a fixed height (only the bar itself toggles)
-        // for the same reason as the body box above — popping this in/out
-        // on runStatus changes was its own way for height to change
-        // unexpectedly during a batch run.
-        h(Box, { sx: { height: 4, borderRadius: 1, mx: 1, mb: `${NODE_FOOTER_H - 4}px` } },
-          data.runStatus === 'running' && h(LinearProgress, { sx: { height: 4, borderRadius: 1 } })),
-        makeResizeHandles(rowsBottom).map(rh => h(Box, {
-          key: rh.dir,
-          className: 'nodrag nopan',
-          onMouseDown: e => {
+          }}>{body}</Box>
+        {/* Always mounted at a fixed height (only the bar itself toggles) */}
+        {/* for the same reason as the body box above — popping this in/out */}
+        {/* on runStatus changes was its own way for height to change */}
+        {/* unexpectedly during a batch run. */}
+        <Box sx={{ height: 4, borderRadius: 1, mx: 1, mb: `${NODE_FOOTER_H - 4}px` }}>
+          {data.runStatus === 'running' && <LinearProgress sx={{ height: 4, borderRadius: 1 }} />}
+        </Box>
+        {makeResizeHandles(rowsBottom).map(rh => <Box
+          key={rh.dir}
+          className="nodrag nopan"
+          onMouseDown={e => {
             e.stopPropagation();
             data.onResizeStart(e, id, rh.dir, gridAlignedBodyHeight(data.__bodyHeight, maxRows));
-          },
-          sx: { position: 'absolute', cursor: rh.cursor, ...rh.sx },
-        }))
-      );
-      return h(React.Fragment, null,
-        cardEl,
-        type === 'template' && h(NodeDetailDialog, { open: detailOpen, node, onClose: () => setDetailOpen(false) })
-      );
+          }}
+          sx={{ position: 'absolute', cursor: rh.cursor, ...rh.sx }} />)}
+      </Paper>;
+      return <React.Fragment>
+        {cardEl}
+        {type === 'template' && <NodeDetailDialog open={detailOpen} node={node} onClose={() => setDetailOpen(false)} />}
+      </React.Fragment>;
     }
 
     // rfNodes builds a new `data` each render; comparing its keys by reference lets
@@ -631,21 +613,20 @@
       const { id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, selected, data, markerEnd, style } = props;
       const [edgePath, labelX, labelY] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
       const color = selected ? PALETTE.error.main : (data && data.color) || PALETTE.grey[500];
-      return h(React.Fragment, null,
-        h(BaseEdge, { id, path: edgePath, markerEnd, style: { ...style, stroke: color, strokeWidth: selected ? 3.5 : 2.5 }, interactionWidth: 20 }),
-        selected && h(EdgeLabelRenderer, null,
-          h(IconButton, {
-            className: 'nodrag nopan', 'aria-label': 'Delete connection',
-            onClick: e => { e.stopPropagation(); data.onDelete(id); },
-            sx: {
+      return <React.Fragment>
+        <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} style={{ ...style, stroke: color, strokeWidth: selected ? 3.5 : 2.5 }} interactionWidth={20} />
+        {selected && <EdgeLabelRenderer>
+          <IconButton
+            className="nodrag nopan" aria-label="Delete connection"
+            onClick={e => { e.stopPropagation(); data.onDelete(id); }}
+            sx={{
               position: 'absolute', transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
               pointerEvents: 'all', width: 18, height: 18, p: 0,
               bgcolor: 'error.main', color: 'common.white', border: '2px solid', borderColor: 'common.white',
               '&:hover': { bgcolor: 'error.dark' },
-            },
-          }, h(Icon, { name: 'Close', size: 10 }))
-        )
-      );
+            }}><Icon name="Close" size={10} /></IconButton>
+        </EdgeLabelRenderer>}
+      </React.Fragment>;
     }
     function edgePropsEqual(prev, next) {
       if (prev.selected !== next.selected) return false;
@@ -661,13 +642,13 @@
       const list = values && values.length ? values : [''];
       function updateAt(i, v) { const next = [...list]; next[i] = v; onChange(next); }
       function removeAt(i) { const next = list.filter((_, idx) => idx !== i); onChange(next.length ? next : ['']); }
-      return h(Box, { sx: { display: 'flex', flexDirection: 'column', gap: 0.75 } },
-        list.map((v, i) => h(Box, { key: i, sx: { display: 'flex', gap: 1, alignItems: 'center' } },
-          h(TextField, { size: 'small', value: v, placeholder: `Option ${i + 1}`, sx: { flex: 1 }, onChange: e => updateAt(i, e.target.value) }),
-          h(IconButton, { size: 'small', color: 'error', onClick: () => removeAt(i) }, h(Icon, { name: 'Close', size: 16 }))
-        )),
-        h(Button, { size: 'small', variant: 'outlined', onClick: () => onChange([...list, '']), sx: { alignSelf: 'flex-start' } }, '+ Add Option')
-      );
+      return <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+        {list.map((v, i) => <Box key={i} sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+          <TextField size="small" value={v} placeholder={`Option ${i + 1}`} sx={{ flex: 1 }} onChange={e => updateAt(i, e.target.value)} />
+          <IconButton size="small" color="error" onClick={() => removeAt(i)}><Icon name="Close" size={16} /></IconButton>
+        </Box>)}
+        <Button size="small" variant="outlined" onClick={() => onChange([...list, ''])} sx={{ alignSelf: 'flex-start' }}>+ Add Option</Button>
+      </Box>;
     }
 
     // Recursive editor for one output schema field. Only depth 0 shows a
@@ -688,52 +669,47 @@
         onChange({ ...field, children: [...field.children, makeOutputField({})] });
       }
 
-      return h(Paper, {
-        variant: 'outlined',
-        sx: { p: 1.5, ...(isArray ? { borderStyle: 'dashed', borderWidth: 2, bgcolor: arrayFieldShade(depth) } : null) },
-      },
-        h(Box, { sx: { display: 'flex', flexDirection: 'column', gap: 1 } },
-          h(Box, { sx: { display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' } },
-            h(TextField, {
-              size: 'small', variant: 'outlined', label: 'Field name', value: field.name, sx: { minWidth: 160, flex: 1 },
-              onChange: e => onChange({ ...field, name: e.target.value }),
-            }),
-            h(FormControl, { size: 'small', sx: { minWidth: 150 } },
-              h(Select, {
-                value: field.valueType,
-                onChange: e => {
+      return <Paper
+        variant="outlined"
+        sx={{ p: 1.5, ...(isArray ? { borderStyle: 'dashed', borderWidth: 2, bgcolor: arrayFieldShade(depth) } : null) }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
+            <TextField
+              size="small" variant="outlined" label="Field name" value={field.name} sx={{ minWidth: 160, flex: 1 }}
+              onChange={e => onChange({ ...field, name: e.target.value })} />
+            <FormControl size="small" sx={{ minWidth: 150 }}>
+              <Select
+                value={field.valueType}
+                onChange={e => {
                   const nextType = e.target.value;
                   const needsChild = nextType === 'array' && field.children.length === 0;
                   onChange({ ...field, valueType: nextType, children: needsChild ? [makeOutputField({})] : field.children });
-                },
-              },
-                h(MenuItem, { value: 'string' }, 'string'),
-                h(MenuItem, { value: 'number' }, 'number'),
-                h(MenuItem, { value: 'integer' }, 'integer'),
-                h(MenuItem, { value: 'boolean' }, 'boolean'),
-                h(MenuItem, { value: 'enum' }, 'string (enum)'),
-                h(MenuItem, { value: 'array' }, 'array'),
-              )
-            ),
-            h(Box, { sx: { flexGrow: 1 } }),
-            h(IconButton, { size: 'small', color: 'error', onClick: onRemove }, h(Icon, { name: 'Close', size: 16 }))
-          ),
-          h(TextField, {
-            size: 'small', variant: 'outlined', label: 'Description', value: field.description, fullWidth: true,
-            multiline: true, minRows: 2, maxRows: 8,
-            onChange: e => onChange({ ...field, description: e.target.value }),
-          }),
-          isEnum && h(EnumValuesEditor, { values: field.enumValues, onChange: next => onChange({ ...field, enumValues: next }) }),
-          isArray && h(Box, { sx: { display: 'flex', flexDirection: 'column', gap: 1, pl: 2, borderLeft: '2px solid', borderColor: 'divider' } },
-            field.children.map(child => h(OutputFieldEditor, {
-              key: child.key, field: child, depth: depth + 1,
-              onChange: next => updateChild(child.key, next),
-              onRemove: () => removeChild(child.key),
-            })),
-            h(Button, { size: 'small', variant: 'outlined', onClick: addChild, sx: { alignSelf: 'flex-start' } }, '+ Add Nested Field')
-          )
-        )
-      );
+                }}>
+                <MenuItem value="string">string</MenuItem>
+                <MenuItem value="number">number</MenuItem>
+                <MenuItem value="integer">integer</MenuItem>
+                <MenuItem value="boolean">boolean</MenuItem>
+                <MenuItem value="enum">string (enum)</MenuItem>
+                <MenuItem value="array">array</MenuItem>
+              </Select>
+            </FormControl>
+            <Box sx={{ flexGrow: 1 }} />
+            <IconButton size="small" color="error" onClick={onRemove}><Icon name="Close" size={16} /></IconButton>
+          </Box>
+          <TextField
+            size="small" variant="outlined" label="Description" value={field.description} fullWidth={true}
+            multiline={true} minRows={2} maxRows={8}
+            onChange={e => onChange({ ...field, description: e.target.value })} />
+          {isEnum && <EnumValuesEditor values={field.enumValues} onChange={next => onChange({ ...field, enumValues: next })} />}
+          {isArray && <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, pl: 2, borderLeft: '2px solid', borderColor: 'divider' }}>
+            {field.children.map(child => <OutputFieldEditor
+              key={child.key} field={child} depth={depth + 1}
+              onChange={next => updateChild(child.key, next)}
+              onRemove={() => removeChild(child.key)} />)}
+            <Button size="small" variant="outlined" onClick={addChild} sx={{ alignSelf: 'flex-start' }}>+ Add Nested Field</Button>
+          </Box>}
+        </Box>
+      </Paper>;
     }
 
     function TemplateManagerDialog(props) {
@@ -768,59 +744,58 @@
         setDraft(d => ({ ...d, outputs: d.outputs.filter(f => f.key !== key) }));
       }
 
-      return h(Dialog, { open, onClose, fullWidth: true, maxWidth: 'xl' },
-        h(DialogTitle, null, draft.id ? 'Edit AI Node' : 'Create AI Node'),
-        h(DialogContent, { sx: { display: 'flex', gap: 3, pt: '20px !important' } },
-          h(Box, { sx: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 } },
-            h(TextField, {
-              variant: 'outlined', label: 'Node name', size: 'small', fullWidth: true, value: draft.name,
-              onChange: e => setDraft(d => ({ ...d, name: e.target.value })),
-            }),
-            h(TextField, {
-              variant: 'outlined', label: 'Content (prompt)', size: 'small', fullWidth: true, multiline: true, minRows: 14, maxRows: 24,
-              value: draft.content,
-              onChange: e => setDraft(d => ({ ...d, content: e.target.value })),
-              helperText: 'Parameter syntax: {string}  <number>  [option1,option2]  (use "#" for a default, e.g. <count#3>)',
-            }),
-            paramPreview.length > 0 && h(Box, { sx: { display: 'flex', flexWrap: 'wrap', gap: 0.5 } },
-              paramPreview.map(p => h(Chip, { key: p.key, size: 'small', label: `${p.name} (${p.kind})` }))
-            )
-          ),
-          h(Divider, { orientation: 'vertical', flexItem: true }),
-          h(Box, { sx: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1.5 } },
-            h(Typography, { variant: 'subtitle2' }, 'Output Schema'),
-            h(Typography, { variant: 'caption', color: 'text.secondary' },
-              "Each top-level field becomes a named, read-only output port on the node, filled in from Codex's actual response once the node runs. Use \"array\" to nest fields describing each item's shape — this defines the JSON Schema the Structured Output call uses."),
-            h(Box, { sx: { display: 'flex', flexDirection: 'column', gap: 1.5 } },
-              draft.outputs.map(f => h(OutputFieldEditor, {
-                key: f.key, field: f, depth: 0,
-                onChange: next => updateOutputField(f.key, next),
-                onRemove: () => removeOutputField(f.key),
-              })),
-              h(Button, { size: 'small', variant: 'outlined', onClick: addOutputField, sx: { alignSelf: 'flex-start' } }, '+ Add Output Field')
-            )
-          )
-        ),
-        h(DialogActions, null,
-          draft.id && h(Button, { size: 'small', onClick: () => setDraft(blankDraft()) }, 'Switch to New Node'),
-          h(Button, { onClick: onClose }, 'Close'),
-          h(Button, { variant: 'contained', onClick: handleSave, disabled: !draft.name.trim() || !draft.content.trim() },
-            draft.id ? 'Save changes' : 'Save Node')
-        )
-      );
+      return <Dialog open={open} onClose={onClose} fullWidth={true} maxWidth="xl">
+        <DialogTitle>{draft.id ? 'Edit AI Node' : 'Create AI Node'}</DialogTitle>
+        <DialogContent sx={{ display: 'flex', gap: 3, pt: '20px !important' }}>
+          <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <TextField
+              variant="outlined" label="Node name" size="small" fullWidth={true} value={draft.name}
+              onChange={e => setDraft(d => ({ ...d, name: e.target.value }))} />
+            <TextField
+              variant="outlined" label="Content (prompt)" size="small" fullWidth={true} multiline={true} minRows={14} maxRows={24}
+              value={draft.content}
+              onChange={e => setDraft(d => ({ ...d, content: e.target.value }))}
+              helperText={'Parameter syntax: {string}  <number>  [option1,option2]  (use "#" for a default, e.g. <count#3>)'} />
+            {paramPreview.length > 0 && <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+              {paramPreview.map(p => <Chip key={p.key} size="small" label={`${p.name} (${p.kind})`} />)}
+            </Box>}
+          </Box>
+          <Divider orientation="vertical" flexItem={true} />
+          <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+            <Typography variant="subtitle2">Output Schema</Typography>
+            <Typography variant="caption" color="text.secondary">
+              {"Each top-level field becomes a named, read-only output port on the node, filled in from Codex's actual response once the node runs. Use \"array\" to nest fields describing each item's shape — this defines the JSON Schema the Structured Output call uses."}
+            </Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+              {draft.outputs.map(f => <OutputFieldEditor
+                key={f.key} field={f} depth={0}
+                onChange={next => updateOutputField(f.key, next)}
+                onRemove={() => removeOutputField(f.key)} />)}
+              <Button size="small" variant="outlined" onClick={addOutputField} sx={{ alignSelf: 'flex-start' }}>+ Add Output Field</Button>
+            </Box>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          {draft.id && <Button size="small" onClick={() => setDraft(blankDraft())}>Switch to New Node</Button>}
+          <Button onClick={onClose}>Close</Button>
+          <Button variant="contained" onClick={handleSave} disabled={!draft.name.trim() || !draft.content.trim()}>
+            {draft.id ? 'Save changes' : 'Save Node'}
+          </Button>
+        </DialogActions>
+      </Dialog>;
     }
 
     // Replaces window.confirm() for anything destructive, to match the
     // rest of the MUI interface.
     function ConfirmDialog(props) {
       const { open, message, confirmLabel, confirmColor, onConfirm, onCancel } = props;
-      return h(Dialog, { open, onClose: onCancel, maxWidth: 'xs', fullWidth: true },
-        h(DialogContent, { sx: { pt: 3 } }, h(Typography, { variant: 'body2' }, message)),
-        h(DialogActions, null,
-          h(Button, { onClick: onCancel }, 'Cancel'),
-          h(Button, { variant: 'contained', color: confirmColor || 'error', onClick: onConfirm, autoFocus: true }, confirmLabel || 'Delete')
-        )
-      );
+      return <Dialog open={open} onClose={onCancel} maxWidth="xs" fullWidth={true}>
+        <DialogContent sx={{ pt: 3 }}><Typography variant="body2">{message}</Typography></DialogContent>
+        <DialogActions>
+          <Button onClick={onCancel}>Cancel</Button>
+          <Button variant="contained" color={confirmColor || 'error'} onClick={onConfirm} autoFocus={true}>{confirmLabel || 'Delete'}</Button>
+        </DialogActions>
+      </Dialog>;
     }
 
     // validate_workflow results (common.py, via POST /evaluate), split into format (schema) and
@@ -830,29 +805,29 @@
       const { open, issues, runBlocked, onClose, onFocusNode, onRemoveEdge } = props;
       const errorCount = issues.filter(i => i.level === 'error').length;
       const byLevel = list => [...list.filter(i => i.level === 'error'), ...list.filter(i => i.level !== 'error')];
-      const section = (title, list) => list.length > 0 && h(Box, { key: title, sx: { mb: 2 } },
-        h(Typography, { variant: 'overline', color: 'text.secondary' }, `${title} (${list.length})`),
-        byLevel(list).map((issue, i) => h(Box, {
-          key: i, 'data-testid': 'issue-row',
-          sx: { display: 'flex', gap: 1, alignItems: 'flex-start', py: 0.75, borderBottom: '1px solid', borderColor: 'divider' },
-        },
-          h(Box, { sx: { color: issue.level === 'error' ? 'error.main' : 'warning.main', pt: '2px' } },
-            h(Icon, { name: issue.level === 'error' ? 'Error' : 'Warning', size: 18 })),
-          h(Typography, { variant: 'body2', sx: { flex: 1, minWidth: 0, wordBreak: 'break-word' } }, issue.message),
-          issue.nodeId && h(Button, { size: 'small', onClick: () => onFocusNode(issue.nodeId) }, 'Show'),
-          issue.fix === 'removeEdge' && h(Button, { size: 'small', color: 'error', onClick: () => onRemoveEdge(issue.edgeId) }, 'Remove Wire')
-        ))
-      );
-      return h(Dialog, { open, onClose, maxWidth: 'md', fullWidth: true },
-        h(DialogTitle, null, 'Pre-Run Check'),
-        h(DialogContent, { dividers: true },
-          runBlocked && errorCount > 0 && h(Alert, { severity: 'error', sx: { mb: 1.5 } }, `Run blocked — fix ${errorCount} error(s) first.`),
-          issues.length === 0 && h(Typography, { variant: 'body2', color: 'text.secondary' }, 'No problems found.'),
-          section('Format', issues.filter(i => i.kind === 'schema')),
-          section('Wiring', issues.filter(i => i.kind === 'graph'))
-        ),
-        h(DialogActions, null, h(Button, { onClick: onClose }, 'Close'))
-      );
+      const section = (title, list) => list.length > 0 && <Box key={title} sx={{ mb: 2 }}>
+        <Typography variant="overline" color="text.secondary">{`${title} (${list.length})`}</Typography>
+        {byLevel(list).map((issue, i) => <Box
+          key={i} data-testid="issue-row"
+          sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', py: 0.75, borderBottom: '1px solid', borderColor: 'divider' }}>
+          <Box sx={{ color: issue.level === 'error' ? 'error.main' : 'warning.main', pt: '2px' }}>
+            <Icon name={issue.level === 'error' ? 'Error' : 'Warning'} size={18} />
+          </Box>
+          <Typography variant="body2" sx={{ flex: 1, minWidth: 0, wordBreak: 'break-word' }}>{issue.message}</Typography>
+          {issue.nodeId && <Button size="small" onClick={() => onFocusNode(issue.nodeId)}>Show</Button>}
+          {issue.fix === 'removeEdge' && <Button size="small" color="error" onClick={() => onRemoveEdge(issue.edgeId)}>Remove Wire</Button>}
+        </Box>)}
+      </Box>;
+      return <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth={true}>
+        <DialogTitle>Pre-Run Check</DialogTitle>
+        <DialogContent dividers={true}>
+          {runBlocked && errorCount > 0 && <Alert severity="error" sx={{ mb: 1.5 }}>{`Run blocked — fix ${errorCount} error(s) first.`}</Alert>}
+          {issues.length === 0 && <Typography variant="body2" color="text.secondary">No problems found.</Typography>}
+          {section('Format', issues.filter(i => i.kind === 'schema'))}
+          {section('Wiring', issues.filter(i => i.kind === 'graph'))}
+        </DialogContent>
+        <DialogActions><Button onClick={onClose}>Close</Button></DialogActions>
+      </Dialog>;
     }
 
     const RUN_LOG_COLORS = { info: 'text.primary', success: 'success.main', warning: 'warning.dark', error: 'error.main' };
@@ -865,29 +840,27 @@
       useEffect(() => { if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight; }, [log.length]);
       const pad = (v, n = 2) => String(v).padStart(n, '0');
       const time = at => { const d = new Date(at); return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`; };
-      return h(Paper, {
-        elevation: 6, 'data-testid': 'run-history',
-        sx: { position: 'absolute', left: 16, bottom: 16, width: 560, maxWidth: 'calc(100% - 32px)', height: 300, zIndex: 5, display: 'flex', flexDirection: 'column' },
-      },
-        h(Box, { sx: { display: 'flex', alignItems: 'center', px: 1.5, py: 0.5, borderBottom: '1px solid', borderColor: 'divider' } },
-          h(Typography, { variant: 'subtitle2', sx: { flex: 1 } }, `Run History (${log.length})`),
-          h(Button, { size: 'small', onClick: onClear, disabled: !log.length }, 'Clear'),
-          h(IconButton, { size: 'small', 'aria-label': 'Close run history', onClick: onClose }, h(Icon, { name: 'Close', size: 16 }))
-        ),
-        h(Box, { ref: listRef, sx: { flex: 1, overflowY: 'auto', px: 1.5, py: 0.5, fontFamily: 'monospace', fontSize: 12 } },
-          log.length === 0 && h(Typography, { variant: 'caption', color: 'text.secondary' }, 'Nothing yet — events appear here during a run.'),
-          log.map(entry => h(Box, { key: entry.seq, 'data-testid': 'run-log-row', sx: { display: 'flex', gap: 1, py: '1px', color: RUN_LOG_COLORS[entry.level] } },
-            h(Box, { component: 'span', sx: { color: 'text.secondary', flexShrink: 0 } }, `#${entry.run} ${time(entry.at)}`),
-            entry.nodeId
-              ? h(Box, {
-                  component: 'span', onClick: () => onFocusNode(entry.nodeId),
-                  sx: { flexShrink: 0, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer', textDecoration: 'underline' },
-                }, `${entry.title} (${entry.nodeId})`)
-              : h(Box, { component: 'span', sx: { flexShrink: 0, fontWeight: 'bold' } }, 'Workflow'),
-            h(Box, { component: 'span', sx: { wordBreak: 'break-word' } }, entry.message)
-          ))
-        )
-      );
+      return <Paper
+        elevation={6} data-testid="run-history"
+        sx={{ position: 'absolute', left: 16, bottom: 16, width: 560, maxWidth: 'calc(100% - 32px)', height: 300, zIndex: 5, display: 'flex', flexDirection: 'column' }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', px: 1.5, py: 0.5, borderBottom: '1px solid', borderColor: 'divider' }}>
+          <Typography variant="subtitle2" sx={{ flex: 1 }}>{`Run History (${log.length})`}</Typography>
+          <Button size="small" onClick={onClear} disabled={!log.length}>Clear</Button>
+          <IconButton size="small" aria-label="Close run history" onClick={onClose}><Icon name="Close" size={16} /></IconButton>
+        </Box>
+        <Box ref={listRef} sx={{ flex: 1, overflowY: 'auto', px: 1.5, py: 0.5, fontFamily: 'monospace', fontSize: 12 }}>
+          {log.length === 0 && <Typography variant="caption" color="text.secondary">Nothing yet — events appear here during a run.</Typography>}
+          {log.map(entry => <Box key={entry.seq} data-testid="run-log-row" sx={{ display: 'flex', gap: 1, py: '1px', color: RUN_LOG_COLORS[entry.level] }}>
+            <Box component="span" sx={{ color: 'text.secondary', flexShrink: 0 }}>{`#${entry.run} ${time(entry.at)}`}</Box>
+            {entry.nodeId
+              ? <Box
+                  component="span" onClick={() => onFocusNode(entry.nodeId)}
+                  sx={{ flexShrink: 0, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer', textDecoration: 'underline' }}>{`${entry.title} (${entry.nodeId})`}</Box>
+              : <Box component="span" sx={{ flexShrink: 0, fontWeight: 'bold' }}>Workflow</Box>}
+            <Box component="span" sx={{ wordBreak: 'break-word' }}>{entry.message}</Box>
+          </Box>)}
+        </Box>
+      </Paper>;
     }
 
     function SaveWorkflowDialog(props) {
@@ -896,19 +869,103 @@
 
       useEffect(() => { if (open) setName(defaultName || ''); }, [open, defaultName]);
 
-      return h(Dialog, { open, onClose, fullWidth: true, maxWidth: 'xs' },
-        h(DialogTitle, null, 'Save Workflow'),
-        h(DialogContent, null,
-          h(TextField, {
-            autoFocus: true, variant: 'outlined', label: 'Workflow name', size: 'small', fullWidth: true, value: name,
-            onChange: e => setName(e.target.value), sx: { mt: 1 },
-          })
-        ),
-        h(DialogActions, null,
-          h(Button, { onClick: onClose }, 'Cancel'),
-          h(Button, { variant: 'contained', disabled: !name.trim(), onClick: () => onSave(name.trim()) }, 'Save')
-        )
-      );
+      return <Dialog open={open} onClose={onClose} fullWidth={true} maxWidth="xs">
+        <DialogTitle>Save Workflow</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus={true} variant="outlined" label="Workflow name" size="small" fullWidth={true} value={name}
+            onChange={e => setName(e.target.value)} sx={{ mt: 1 }} />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="contained" disabled={!name.trim()} onClick={() => onSave(name.trim())}>Save</Button>
+        </DialogActions>
+      </Dialog>;
+    }
+
+    // Generate Workflow: a plain-words request -> Codex (POST /workflows/generate), polled
+    // as a Codex job. State lives here, not in the Dialog, so closing it keeps the job.
+    function GenerateWorkflowDialog(props) {
+      const { open, onClose, onOpen } = props;
+      const [request, setRequest] = useState('');
+      const [jobId, setJobId] = useState(null);
+      const [job, setJob] = useState(null);
+      const [error, setError] = useState(null);
+      const finished = job && ['done', 'error', 'stopped'].includes(job.status);
+      const busy = !!jobId && !finished && !error;
+
+      useEffect(() => {
+        if (!jobId) return;
+        let cancelled = false, timer = null, failures = 0;
+        async function poll() {
+          try {
+            const j = await fetchCodexJobRequest(jobId);
+            if (cancelled) return;
+            failures = 0;
+            setJob(j);
+            if (['done', 'error', 'stopped'].includes(j.status)) return;
+          } catch (e) {
+            if (cancelled) return;
+            if (++failures >= RUN_POLL_MAX_FAILURES) { setError(`Lost the generation job — is api_server.py running on ${CODEX_API_BASE}? (${e.message || e})`); return; }
+          }
+          timer = setTimeout(poll, RUN_POLL_INTERVAL_MS);
+        }
+        poll();
+        return () => { cancelled = true; clearTimeout(timer); };
+      }, [jobId]);
+
+      async function generate() {
+        setJob(null); setError(null); setJobId(null);
+        try {
+          const res = await generateWorkflowRequest(request.trim());
+          setJobId(res.job_id);
+        } catch (e) {
+          setError(`Failed to start — is api_server.py running on ${CODEX_API_BASE}? (${e.message || e})`);
+        }
+      }
+
+      const output = job && job.output;
+      const issues = (output && output.issues) || [];
+      return <Dialog open={open} onClose={onClose} fullWidth={true} maxWidth="md">
+        <DialogTitle>Generate Workflow</DialogTitle>
+        <DialogContent dividers={true} sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+          <TextField
+            data-testid="generate-request" autoFocus={true} variant="outlined" label="What should the workflow do?"
+            multiline={true} minRows={4} fullWidth={true} value={request} disabled={busy} sx={{ mt: 1 }}
+            onChange={e => setRequest(e.target.value)} />
+          <Typography variant="caption" color="text.secondary">
+            Codex builds it from the Plugin Nodes, Group, Wrapper and saved AI Nodes. Nothing is saved or run — it opens on the canvas for you to check.
+          </Typography>
+          {busy && <Box>
+            <LinearProgress />
+            <Typography variant="caption" color="text.secondary">
+              {`Generating… ${job ? Math.round(job.elapsed_seconds) : 0}s`}
+            </Typography>
+          </Box>}
+          {error && <Alert severity="error">{error}</Alert>}
+          {job && job.status === 'error' && <Alert severity="error">{job.error || 'Generation failed.'}</Alert>}
+          {job && job.status === 'stopped' && <Alert severity="info">Stopped.</Alert>}
+          {output && <Box data-testid="generate-result" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <Typography variant="subtitle2">
+              {`${output.workflow.name} — ${Object.keys(output.workflow.nodes).length} node(s), ${output.workflow.edges.length} wire(s)` +
+              (output.attempts > 1 ? ` (${output.attempts} tries)` : '')}
+            </Typography>
+            {output.summary && <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{output.summary}</Typography>}
+            {issues.length === 0
+              ? <Alert severity="success">No problems found.</Alert>
+              : <Alert severity={issues.some(i => i.level === 'error') ? 'error' : 'warning'}>
+                  {issues.map((i, k) => <Typography key={k} variant="body2">{i.message}</Typography>)}
+              </Alert>}
+          </Box>}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={onClose}>Close</Button>
+          {busy
+            ? <Button color="error" onClick={() => stopCodexJobRequest(jobId).catch(() => {})}>Stop</Button>
+            : <Button disabled={!request.trim()} onClick={generate}>{output ? 'Generate Again' : 'Generate'}</Button>}
+          {output && !busy && <Button variant="contained" data-testid="generate-open" onClick={() => onOpen(output.workflow)}>Open on Canvas</Button>}
+        </DialogActions>
+      </Dialog>;
     }
 
     // Wrapper's Max retries: a number field whose step below 0 is ∞ (UNLIMITED_RETRIES);
@@ -922,39 +979,41 @@
         const digits = text.replace(/[^0-9]/g, '');
         return digits ? parseInt(digits, 10) : (text.includes('∞') ? UNLIMITED_RETRIES : 0);
       };
-      const arrow = (label, d) => h(IconButton, {
-        size: 'small', disabled, tabIndex: -1, sx: { p: 0, fontSize: 10, lineHeight: 1 }, onClick: () => step(d),
-      }, label);
-      return h(TextField, {
-        label: 'Max retries', size: 'small', fullWidth: true, variant: 'outlined', disabled,
-        value: unlimited ? '∞' : String(value),
-        inputProps: { inputMode: 'numeric', 'data-testid': 'max-retries' },
-        onChange: e => onChange(parse(e.target.value)),
-        onKeyDown: e => {
+      const arrow = (label, d) => <IconButton
+        size="small" disabled={disabled} tabIndex={-1} sx={{ p: 0, fontSize: 10, lineHeight: 1 }} onClick={() => step(d)}>{label}</IconButton>;
+      return <TextField
+        label="Max retries" size="small" fullWidth={true} variant="outlined" disabled={disabled}
+        value={unlimited ? '∞' : String(value)}
+        inputProps={{ inputMode: 'numeric', 'data-testid': 'max-retries' }}
+        onChange={e => onChange(parse(e.target.value))}
+        onKeyDown={e => {
           if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); step(e.key === 'ArrowUp' ? 1 : -1); }
-        },
-        InputProps: {
-          endAdornment: h(InputAdornment, { position: 'end' },
-            h(Box, { sx: { display: 'flex', flexDirection: 'column' } }, arrow('▲', 1), arrow('▼', -1))),
-        },
-        helperText: unlimited ? 'Retries until the conditions pass (or Stop)' : undefined,
-      });
+        }}
+        InputProps={{
+          endAdornment: <InputAdornment position="end">
+            <Box sx={{ display: 'flex', flexDirection: 'column' }}>{arrow('▲', 1)}{arrow('▼', -1)}</Box>
+          </InputAdornment>,
+        }}
+        helperText={unlimited ? 'Retries until the conditions pass (or Stop)' : undefined} />;
     }
 
     // Add-node menu: one button per node type.
     function NodeTypeButtons({ types, color, onAdd }) {
-      return h(Box, { sx: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 } },
-        types.map(t => h(Button, {
-          key: t.type, size: 'small', variant: 'outlined', fullWidth: true,
-          sx: { color, borderColor: color }, onClick: () => onAdd(t.type),
-        }, t.title))
-      );
+      return <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
+        {types.map(t => <Button
+          key={t.type} size="small" variant="outlined" fullWidth={true}
+          sx={{ color, borderColor: color }} onClick={() => onAdd(t.type)}>{t.title}</Button>)}
+      </Box>;
     }
 
     function FlowApp() {
       const [nodes, setNodes] = useState({});
       const [edges, setEdges] = useState([]);
       const [selection, setSelection] = useState(null);
+      // Nodes picked by the right-drag box (moved together by dragging any of them).
+      const [boxSelected, setBoxSelected] = useState(() => new Set());
+      // The right-drag box being drawn, in paneWrap pixels ({x0, y0, x1, y1}).
+      const [selectBox, setSelectBox] = useState(null);
       // Right-side panel for the selected node. editPanelClosed (X button) resets when
       // the selection moves to another node — done during render, the React pattern
       // for state derived from a changing input, so no stale frame commits.
@@ -974,6 +1033,7 @@
       const [currentWorkflowId, setCurrentWorkflowId] = useState(null);
       const [currentWorkflowName, setCurrentWorkflowName] = useState('');
       const [saveWorkflowOpen, setSaveWorkflowOpen] = useState(false);
+      const [generateOpen, setGenerateOpen] = useState(false);
       const [workflows, setWorkflows] = useState([]);
       const [workflowsError, setWorkflowsError] = useState(null);
       const [confirmState, setConfirmState] = useState(null);
@@ -1082,6 +1142,34 @@
       const rfInstance = useReactFlow();
       const updateNodeInternals = useUpdateNodeInternals();
       const paneWrapRef = useRef(null);
+      // Right-drag on the empty canvas draws a box; the nodes it touches get selected.
+      function beginBoxSelect(e) {
+        if (e.button !== 2 || !e.target.classList.contains('react-flow__pane')) return;
+        e.preventDefault();
+        const wrap = paneWrapRef.current.getBoundingClientRect();
+        const x0 = e.clientX - wrap.left, y0 = e.clientY - wrap.top;
+        const start = { x: e.clientX, y: e.clientY };
+        setSelectBox({ x0, y0, x1: x0, y1: y0 });
+        const onMove = ev => setSelectBox({ x0, y0, x1: ev.clientX - wrap.left, y1: ev.clientY - wrap.top });
+        const onUp = ev => {
+          window.removeEventListener('pointermove', onMove);
+          window.removeEventListener('pointerup', onUp);
+          setSelectBox(null);
+          // The right-button release fires contextmenu where it lands — swallow it so it
+          // can't reach a port (whose right-click deletes its wires).
+          const swallow = ce => { ce.preventDefault(); ce.stopPropagation(); };
+          window.addEventListener('contextmenu', swallow, { capture: true, once: true });
+          setTimeout(() => window.removeEventListener('contextmenu', swallow, { capture: true }), 300);
+          const a = rfInstance.screenToFlowPosition(start);
+          const b = rfInstance.screenToFlowPosition({ x: ev.clientX, y: ev.clientY });
+          const rect = { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), width: Math.abs(a.x - b.x), height: Math.abs(a.y - b.y) };
+          const ids = rect.width && rect.height ? rfInstance.getIntersectingNodes(rect, true).map(n => n.id) : [];
+          setBoxSelected(new Set(ids));
+          setSelection(ids.length === 1 ? { type: 'node', id: ids[0] } : null);
+        };
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+      }
       const nodeIdRef = useRef(1);
       const edgeIdRef = useRef(1);
       const zCounterRef = useRef(1);
@@ -1322,28 +1410,41 @@
           .catch(e => setWorkflowsError(`Could not load workflows — is api_server.py running on ${CODEX_API_BASE}? (${e.message || e})`));
       }
 
+      // Replaces the canvas with wf. id null = not saved yet (Save creates a new one).
+      function showWorkflow(wf, id) {
+        const loadedNodes = migrateLoadedNodes(wf.nodes || {});
+        const loadedEdges = wf.edges || [];
+        // Loading never fires anything by itself — Move/Queue side
+        // effects only ever happen inside runWorkflow.
+        setNodes(loadedNodes);
+        setShowWaiting(false);
+        // See syncTemplateNodesWithCatalog: loading doesn't change `templates`, so the effect won't run.
+        syncTemplateNodesWithCatalog(templates);
+        setEdges(loadedEdges);
+        rfInstance.setViewport({
+          x: wf.pan ? wf.pan.x : 120,
+          y: wf.pan ? wf.pan.y : 80,
+          zoom: typeof wf.zoom === 'number' ? wf.zoom : 1,
+        });
+        bumpIdCountersPastLoaded(loadedNodes, loadedEdges);
+        setCurrentWorkflowId(id);
+        setCurrentWorkflowName(wf.name);
+        setSelection(null); setBoxSelected(new Set());
+      }
+
+      function openGeneratedWorkflow(wf) {
+        askConfirm('Open the generated workflow? This replaces everything currently on the canvas.', () => {
+          showWorkflow(wf, null);
+          setGenerateOpen(false);
+          setMenuOpen(false);
+        }, { confirmLabel: 'Open', confirmColor: 'primary' });
+      }
+
       function loadWorkflow(id) {
         askConfirm('Load this workflow? This replaces everything currently on the canvas.', async () => {
           try {
             const wf = await fetchWorkflowById(id);
-            const loadedNodes = migrateLoadedNodes(wf.nodes || {});
-            const loadedEdges = wf.edges || [];
-            // Loading never fires anything by itself — Move/Queue side
-            // effects only ever happen inside runWorkflow.
-            setNodes(loadedNodes);
-            setShowWaiting(false);
-            // See syncTemplateNodesWithCatalog: loading doesn't change `templates`, so the effect won't run.
-            syncTemplateNodesWithCatalog(templates);
-            setEdges(loadedEdges);
-            rfInstance.setViewport({
-              x: wf.pan ? wf.pan.x : 120,
-              y: wf.pan ? wf.pan.y : 80,
-              zoom: typeof wf.zoom === 'number' ? wf.zoom : 1,
-            });
-            bumpIdCountersPastLoaded(loadedNodes, loadedEdges);
-            setCurrentWorkflowId(wf.id);
-            setCurrentWorkflowName(wf.name);
-            setSelection(null);
+            showWorkflow(wf, wf.id);
           } catch (e) {
             setWorkflowsError(`Failed to load workflow — is api_server.py running on ${CODEX_API_BASE}? (${e.message || e})`);
           }
@@ -1438,7 +1539,7 @@
 
       function clearAll() {
         askConfirm('Delete all nodes and connections?', () => {
-          setNodes({}); setEdges([]); setSelection(null);
+          setNodes({}); setEdges([]); setSelection(null); setBoxSelected(new Set());
           setCurrentWorkflowId(null); setCurrentWorkflowName('');
           setShowWaiting(false);
         }, { confirmLabel: 'Clear All' });
@@ -1549,7 +1650,7 @@
           id: node.id,
           type: 'app',
           position: { x: node.x, y: node.y },
-          selected: !!(selection && selection.type === 'node' && selection.id === node.id),
+          selected: boxSelected.has(node.id) || !!(selection && selection.type === 'node' && selection.id === node.id),
           initialWidth, initialHeight,
           // rfNodes rebuilds fresh via .map() every render, so React Flow
           // never sees the "same reference as last render" it needs to
@@ -1607,11 +1708,12 @@
       // its fields from the view; none (no panel) for a type with nothing to edit.
       const editingView = editingNode ? view.nodes[editingNode.id] : null;
       const editingType = editingNode ? typesByType[editingNode.type] : null;
+      const CustomForm = editingType && CUSTOM_EDIT_FORMS[editingType.customForm];
       const editForm = !editingNode ? null
-        : editingType && CUSTOM_EDIT_FORMS[editingType.customForm]
-          ? h(CUSTOM_EDIT_FORMS[editingType.customForm], { key: editingNode.id, node: editingNode, updateData, nodes, edges, isRunningWorkflow })
+        : CustomForm
+          ? <CustomForm key={editingNode.id} node={editingNode} updateData={updateData} nodes={nodes} edges={edges} isRunningWorkflow={isRunningWorkflow} />
           : editingView && editingView.fields.length
-            ? h(FieldsForm, { key: editingNode.id, node: editingNode, fields: editingView.fields, updateData, isRunningWorkflow })
+            ? <FieldsForm key={editingNode.id} node={editingNode} fields={editingView.fields} updateData={updateData} isRunningWorkflow={isRunningWorkflow} />
             : null;
 
       // Controlled mode: React Flow proposes changes (drag/resize/select/
@@ -1644,8 +1746,11 @@
               positionRafRef.current = requestAnimationFrame(flushPendingPositions);
             }
           } else if (change.type === 'select') {
-            if (change.selected) setSelection({ type: 'node', id: change.id });
-            else setSelection(sel => (sel && sel.type === 'node' && sel.id === change.id) ? null : sel);
+            if (change.selected) { if (!boxSelected.has(change.id)) setSelection({ type: 'node', id: change.id }); }
+            else {
+              setSelection(sel => (sel && sel.type === 'node' && sel.id === change.id) ? null : sel);
+              setBoxSelected(prev => { if (!prev.has(change.id)) return prev; const next = new Set(prev); next.delete(change.id); return next; });
+            }
           } else if (change.type === 'remove') {
             deleteNode(change.id);
           }
@@ -1679,250 +1784,245 @@
         });
       }
 
-      return h(Box, { sx: { height: '100vh', display: 'flex', flexDirection: 'column' } },
-        h(AppBar, { position: 'static', color: 'default', elevation: 1 },
-          h(Toolbar, { variant: 'dense', sx: { gap: 1, flexWrap: 'wrap', py: 0.5 } },
-            h(Typography, { variant: 'h6', sx: { mr: 1 } }, 'Telar de Ideas'),
-            currentWorkflowName && h(Typography, { variant: 'body2', color: 'text.secondary', sx: { mr: 1 } }, `— ${currentWorkflowName}`),
-            h(Box, { sx: { flexGrow: 1 } }),
-            h(Tooltip, { title: 'Pre-run check — errors block Run' },
-              h(Chip, {
-                'data-testid': 'issues-chip', size: 'small', clickable: true,
-                color: issueCounts.error ? 'error' : issueCounts.warning ? 'warning' : 'success',
-                variant: issueCounts.error || issueCounts.warning ? 'filled' : 'outlined',
-                label: issueCounts.error || issueCounts.warning
+      return <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+        <AppBar position="static" color="default" elevation={1}>
+          <Toolbar variant="dense" sx={{ gap: 1, flexWrap: 'wrap', py: 0.5 }}>
+            <Typography variant="h6" sx={{ mr: 1 }}>Telar de Ideas</Typography>
+            {currentWorkflowName && <Typography variant="body2" color="text.secondary" sx={{ mr: 1 }}>{`— ${currentWorkflowName}`}</Typography>}
+            <Box sx={{ flexGrow: 1 }} />
+            <Tooltip title="Pre-run check — errors block Run">
+              <Chip
+                data-testid="issues-chip" size="small" clickable={true}
+                color={issueCounts.error ? 'error' : issueCounts.warning ? 'warning' : 'success'}
+                variant={issueCounts.error || issueCounts.warning ? 'filled' : 'outlined'}
+                label={issueCounts.error || issueCounts.warning
                   ? `${issueCounts.error} error(s) · ${issueCounts.warning} warning(s)`
-                  : 'No problems',
-                onClick: () => setIssuesDialog({ runBlocked: false }),
-              })
-            ),
-            h(Button, { size: 'small', variant: 'contained', color: 'error', onClick: clearAll }, 'Clear All')
-          )
-        ),
-        h(Box, { sx: { flex: 1, display: 'flex', minHeight: 0, position: 'relative' } },
-          !menuOpen && h(Tooltip, { title: 'Add node / open workflows' },
-            h(Fab, {
-              'data-testid': 'menu-fab', size: 'medium', color: 'primary',
-              sx: { position: 'absolute', top: 16, left: 16, zIndex: 6 },
-              onClick: () => setMenuOpen(true),
-            }, h(Icon, { name: 'Add', size: 24 }))
-          ),
-          // Floats over the canvas (no reflow) so the viewport doesn't jump on open/close.
-          menuOpen && h(Paper, {
-            elevation: 6, 'data-testid': 'node-menu',
-            sx: {
+                  : 'No problems'}
+                onClick={() => setIssuesDialog({ runBlocked: false })} />
+            </Tooltip>
+            <Button size="small" variant="contained" color="error" onClick={clearAll}>Clear All</Button>
+          </Toolbar>
+        </AppBar>
+        <Box sx={{ flex: 1, display: 'flex', minHeight: 0, position: 'relative' }}>
+          {!menuOpen && <Tooltip title="Add node / open workflows">
+            <Fab
+              data-testid="menu-fab" size="medium" color="primary"
+              sx={{ position: 'absolute', top: 16, left: 16, zIndex: 6 }}
+              onClick={() => setMenuOpen(true)}><Icon name="Add" size={24} /></Fab>
+          </Tooltip>}
+          {/* Floats over the canvas (no reflow) so the viewport doesn't jump on open/close. */}
+          {menuOpen && <Paper
+            elevation={6} data-testid="node-menu"
+            sx={{
               position: 'absolute', top: 12, left: 12, width: 360, maxHeight: 'calc(100% - 24px)', zIndex: 6,
               bgcolor: 'grey.50', p: 1.5, display: 'flex', flexDirection: 'column', gap: 1, overflowY: 'auto',
-            },
-          },
-            h(Box, { sx: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
-              h(Typography, { variant: 'overline', color: 'text.secondary' }, 'Default Node'),
-              h(IconButton, {
-                size: 'small', 'aria-label': 'Close menu',
-                onClick: () => setMenuOpen(false),
-              }, h(Icon, { name: 'Close', size: 16 }))
-            ),
-            // Default Node: the core's types; Plugin Node: node_plugin/ files in file name order.
-            h(NodeTypeButtons, { types: nodeTypeList.filter(t => t.menu && !t.plugin), color: DEFAULT_NODE_COLOR, onAdd: addNode }),
-            h(Divider),
-            h(Typography, { variant: 'overline', color: 'text.secondary' }, 'Plugin Node'),
-            h(NodeTypeButtons, { types: nodeTypeList.filter(t => t.menu && t.plugin), color: PLUGIN_NODE_COLOR, onAdd: addNode }),
-            nodeTypeErrors.map(err => h(Typography, { key: err, variant: 'caption', color: 'error' }, `Node type file failed to load — ${err}`)),
-            h(Divider),
-            h(Typography, { variant: 'overline', color: 'text.secondary' }, 'AI Node'),
-            templatesError && h(Typography, { variant: 'caption', color: 'error' }, templatesError),
-            (!templatesError && templates.length === 0)
-              ? h(Typography, { variant: 'caption', color: 'text.secondary' }, 'No AI nodes yet.')
-              : h(Box, { sx: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.5 } },
-                  templates.map(t => h(Box, { key: t.id, sx: { display: 'flex', alignItems: 'center', gap: 0.25, minWidth: 0 } },
-                    h(Button, {
-                      size: 'small', variant: 'outlined',
-                      sx: { color: TEMPLATE_COLOR, borderColor: TEMPLATE_COLOR, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' },
-                      onClick: () => addTemplateNode(t),
-                    }, t.name),
-                    h(Tooltip, { title: 'Edit' },
-                      h(IconButton, {
-                        size: 'small',
-                        onClick: () => { setEditTarget(t); setTemplateManagerOpen(true); },
-                      }, h(Icon, { name: 'Edit', size: 16 }))
-                    ),
-                    h(Tooltip, { title: 'Delete' },
-                      h(IconButton, {
-                        size: 'small', color: 'error',
-                        onClick: () => deleteTemplate(t.id),
-                      }, h(Icon, { name: 'Close', size: 16 }))
-                    )
-                  ))
-                ),
-            h(Button, {
-              size: 'small', variant: 'contained', onClick: () => { setEditTarget(null); setTemplateManagerOpen(true); },
-              sx: { alignSelf: 'flex-start', bgcolor: TEMPLATE_COLOR, '&:hover': { bgcolor: TEMPLATE_COLOR, filter: 'brightness(0.9)' } },
-            }, '+ Create AI Node'),
-            h(Divider),
-            h(Typography, { variant: 'overline', color: 'text.secondary' }, 'Workflow'),
-            workflowsError && h(Typography, { variant: 'caption', color: 'error' }, workflowsError),
-            (!workflowsError && workflows.length === 0)
-              ? h(Typography, { variant: 'caption', color: 'text.secondary' }, 'No saved workflows yet.')
-              : h(Box, { sx: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.5 } },
-                  workflows.map(w => h(Box, { key: w.id, sx: { display: 'flex', alignItems: 'center', gap: 0.25, minWidth: 0 } },
-                    h(Tooltip, { title: `${w.node_count} node(s)` },
-                      h(Button, {
-                        size: 'small', variant: currentWorkflowId === w.id ? 'contained' : 'outlined',
-                        sx: currentWorkflowId === w.id
+            }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Typography variant="overline" color="text.secondary">Default Node</Typography>
+              <IconButton
+                size="small" aria-label="Close menu"
+                onClick={() => setMenuOpen(false)}><Icon name="Close" size={16} /></IconButton>
+            </Box>
+            {/* Default Node: the core's types; Plugin Node: node_plugin/ files in file name order. */}
+            <NodeTypeButtons types={nodeTypeList.filter(t => t.menu && !t.plugin)} color={DEFAULT_NODE_COLOR} onAdd={addNode} />
+            <Divider />
+            <Typography variant="overline" color="text.secondary">Plugin Node</Typography>
+            <NodeTypeButtons types={nodeTypeList.filter(t => t.menu && t.plugin)} color={PLUGIN_NODE_COLOR} onAdd={addNode} />
+            {nodeTypeErrors.map(err => <Typography key={err} variant="caption" color="error">{`Node type file failed to load — ${err}`}</Typography>)}
+            <Divider />
+            <Typography variant="overline" color="text.secondary">AI Node</Typography>
+            {templatesError && <Typography variant="caption" color="error">{templatesError}</Typography>}
+            {(!templatesError && templates.length === 0)
+              ? <Typography variant="caption" color="text.secondary">No AI nodes yet.</Typography>
+              : <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.5 }}>
+                  {templates.map(t => <Box key={t.id} sx={{ display: 'flex', alignItems: 'center', gap: 0.25, minWidth: 0 }}>
+                    <Button
+                      size="small" variant="outlined"
+                      sx={{ color: TEMPLATE_COLOR, borderColor: TEMPLATE_COLOR, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}
+                      onClick={() => addTemplateNode(t)}>{t.name}</Button>
+                    <Tooltip title="Edit">
+                      <IconButton
+                        size="small"
+                        onClick={() => { setEditTarget(t); setTemplateManagerOpen(true); }}><Icon name="Edit" size={16} /></IconButton>
+                    </Tooltip>
+                    <Tooltip title="Delete">
+                      <IconButton
+                        size="small" color="error"
+                        onClick={() => deleteTemplate(t.id)}><Icon name="Close" size={16} /></IconButton>
+                    </Tooltip>
+                  </Box>)}
+              </Box>}
+            <Button
+              size="small" variant="contained" onClick={() => { setEditTarget(null); setTemplateManagerOpen(true); }}
+              sx={{ alignSelf: 'flex-start', bgcolor: TEMPLATE_COLOR, '&:hover': { bgcolor: TEMPLATE_COLOR, filter: 'brightness(0.9)' } }}>+ Create AI Node</Button>
+            <Divider />
+            <Typography variant="overline" color="text.secondary">Workflow</Typography>
+            {workflowsError && <Typography variant="caption" color="error">{workflowsError}</Typography>}
+            {(!workflowsError && workflows.length === 0)
+              ? <Typography variant="caption" color="text.secondary">No saved workflows yet.</Typography>
+              : <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.5 }}>
+                  {workflows.map(w => <Box key={w.id} sx={{ display: 'flex', alignItems: 'center', gap: 0.25, minWidth: 0 }}>
+                    <Tooltip title={`${w.node_count} node(s)`}>
+                      <Button
+                        size="small" variant={currentWorkflowId === w.id ? 'contained' : 'outlined'}
+                        sx={currentWorkflowId === w.id
                           ? { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }
-                          : { color: 'text.primary', borderColor: 'divider', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' },
-                        onClick: () => loadWorkflow(w.id),
-                      }, w.name)
-                    ),
-                    h(Tooltip, { title: 'Delete' },
-                      h(IconButton, {
-                        size: 'small', color: 'error',
-                        onClick: () => deleteWorkflow(w.id),
-                      }, h(Icon, { name: 'Close', size: 16 }))
-                    )
-                  ))
-                ),
-            h(Button, {
-              size: 'small', variant: 'contained', onClick: () => setSaveWorkflowOpen(true),
-              sx: { alignSelf: 'flex-start' },
-            }, '+ Save Workflow')
-          ),
-          h(Box, {
-            ref: paneWrapRef,
-            sx: { flex: 1, position: 'relative', bgcolor: '#eef1f5' },
-          },
-            h(ReactFlow, {
-              nodes: rfNodes, edges: rfEdges,
-              nodeTypes: NODE_TYPES, edgeTypes: EDGE_TYPES,
-              onNodesChange, onEdgesChange, onConnect,
-              onPaneClick: () => { setSelection(null); setMenuOpen(false); },
-              defaultViewport: { x: 120, y: 80, zoom: 1 },
-              minZoom: 0.25, maxZoom: 2.5,
-              snapToGrid: true, snapGrid: [GRID_SIZE, GRID_SIZE],
-              deleteKeyCode: null, multiSelectionKeyCode: null,
-              connectionLineStyle: { stroke: PALETTE.grey[500], strokeWidth: 2.5, strokeDasharray: '6 4' },
-              proOptions: { hideAttribution: true },
-            },
-              h(Background, { variant: BackgroundVariant.Dots, gap: GRID_SIZE, size: 1.2, color: '#c7ccd4' })
-            ),
-            historyOpen && h(RunHistoryPanel, {
-              log: runLog,
-              onFocusNode: focusNode,
-              onClear: () => setRunLog([]),
-              onClose: () => setHistoryOpen(false),
-            })
-          ),
-          // Floats over the canvas like the node menu; stops above the run FABs.
-          editForm && h(Paper, {
-            key: 'edit-panel', elevation: 6, 'data-testid': 'edit-panel',
-            sx: {
+                          : { color: 'text.primary', borderColor: 'divider', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}
+                        onClick={() => loadWorkflow(w.id)}>{w.name}</Button>
+                    </Tooltip>
+                    <Tooltip title="Delete">
+                      <IconButton
+                        size="small" color="error"
+                        onClick={() => deleteWorkflow(w.id)}><Icon name="Close" size={16} /></IconButton>
+                    </Tooltip>
+                  </Box>)}
+              </Box>}
+            <Box sx={{ display: 'flex', gap: 1 }}>
+              <Button
+                size="small" variant="contained" onClick={() => setSaveWorkflowOpen(true)}>+ Save Workflow</Button>
+              <Button
+                data-testid="generate-workflow" size="small" variant="outlined" onClick={() => setGenerateOpen(true)}>+ Generate Workflow</Button>
+            </Box>
+          </Paper>}
+          <Box
+            ref={paneWrapRef}
+            sx={{ flex: 1, position: 'relative', bgcolor: '#eef1f5' }}
+            onPointerDownCapture={beginBoxSelect}
+            onContextMenu={e => { if (e.target.classList.contains('react-flow__pane')) e.preventDefault(); }}>
+            <ReactFlow
+              nodes={rfNodes} edges={rfEdges}
+              nodeTypes={NODE_TYPES} edgeTypes={EDGE_TYPES}
+              onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect}
+              onPaneClick={() => { setSelection(null); setBoxSelected(new Set()); setMenuOpen(false); }}
+              defaultViewport={{ x: 120, y: 80, zoom: 1 }}
+              minZoom={0.25} maxZoom={2.5}
+              snapToGrid={true} snapGrid={[GRID_SIZE, GRID_SIZE]}
+              deleteKeyCode={null} multiSelectionKeyCode={null}
+              connectionLineStyle={{ stroke: PALETTE.grey[500], strokeWidth: 2.5, strokeDasharray: '6 4' }}
+              proOptions={{ hideAttribution: true }}>
+              {/* Graph paper: a thin line per grid cell, a darker one every 5 cells. */}
+              <Background id="grid-minor" variant={BackgroundVariant.Lines} gap={GRID_SIZE} lineWidth={0.5} color="#dde1e7" />
+              <Background id="grid-major" variant={BackgroundVariant.Lines} gap={GRID_SIZE * 5} lineWidth={1} color="#c3c9d2" />
+            </ReactFlow>
+            {selectBox && <Box
+              data-testid="select-box"
+              sx={{
+                position: 'absolute', pointerEvents: 'none', zIndex: 5,
+                left: Math.min(selectBox.x0, selectBox.x1), top: Math.min(selectBox.y0, selectBox.y1),
+                width: Math.abs(selectBox.x1 - selectBox.x0), height: Math.abs(selectBox.y1 - selectBox.y0),
+                border: `1px dashed ${PALETTE.primary.main}`, bgcolor: 'rgba(25,118,210,0.08)',
+              }} />}
+            {historyOpen && <RunHistoryPanel
+              log={runLog}
+              onFocusNode={focusNode}
+              onClear={() => setRunLog([])}
+              onClose={() => setHistoryOpen(false)} />}
+          </Box>
+          {/* Floats over the canvas like the node menu; stops above the run FABs. */}
+          {editForm && <Paper
+            key="edit-panel" elevation={6} data-testid="edit-panel"
+            sx={{
               position: 'absolute', top: 12, right: 12, width: EDIT_PANEL_WIDTH, maxHeight: 'calc(100% - 100px)', zIndex: 6,
               p: 1.5, display: 'flex', flexDirection: 'column', gap: 1, overflowY: 'auto',
-            },
-          },
-            // Sticky so the title and close button stay put while long forms scroll.
-            h(Box, { sx: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: -12, mt: -1.5, pt: 1.5, pb: 0.5, bgcolor: 'background.paper', zIndex: 2 } },
-              h(Typography, { variant: 'subtitle2' }, `Edit ${editingView ? editingView.title : editingNode.type}`),
-              h(IconButton, {
-                size: 'small', 'aria-label': 'Close edit panel',
-                onClick: () => setEditPanelClosed(true),
-              }, h(Icon, { name: 'Close', size: 16 }))
-            ),
-            editForm
-          )
-        ),
-        h(TemplateManagerDialog, {
-          open: templateManagerOpen,
-          editTarget,
-          onClose: () => { setTemplateManagerOpen(false); setEditTarget(null); },
-          onSave: saveTemplate,
-        }),
-        h(SaveWorkflowDialog, {
-          open: saveWorkflowOpen,
-          defaultName: currentWorkflowName,
-          onClose: () => setSaveWorkflowOpen(false),
-          onSave: saveWorkflow,
-        }),
-        h(ConfirmDialog, {
-          open: !!confirmState,
-          message: confirmState && confirmState.message,
-          confirmLabel: confirmState && confirmState.confirmLabel,
-          confirmColor: confirmState && confirmState.confirmColor,
-          onCancel: () => setConfirmState(null),
-          onConfirm: () => { const action = confirmState && confirmState.action; setConfirmState(null); if (action) action(); },
-        }),
-        h(IssuesDialog, {
-          open: !!issuesDialog,
-          runBlocked: !!(issuesDialog && issuesDialog.runBlocked),
-          issues,
-          onClose: () => setIssuesDialog(null),
-          onFocusNode: id => { setIssuesDialog(null); focusNode(id); },
-          onRemoveEdge: deleteEdge,
-        }),
-        h(Snackbar, {
-          open: !!toast, autoHideDuration: 5000, onClose: () => setToast(null),
-          anchorOrigin: { vertical: 'bottom', horizontal: 'center' },
-        },
-          h(Alert, { severity: 'error', onClose: () => setToast(null) }, toast || '')
-        ),
-        // Covers everything (dialogs too) while api_server.py can't be reached — nothing
-        // node-type-specific can be drawn or edited without it.
-        serverState !== 'ok' && h(Box, {
-          'data-testid': 'server-overlay',
-          sx: { position: 'fixed', inset: 0, zIndex: 2000, bgcolor: 'rgba(255,255,255,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center' },
-        },
-          h(Paper, { elevation: 6, sx: { p: 2.5, display: 'flex', alignItems: 'center', gap: 2, maxWidth: 520 } },
-            h(CircularProgress, { size: 24 }),
-            h(Box, null,
-              h(Typography, { variant: 'body2' }, serverState === 'connecting'
+            }}>
+            {/* Sticky so the title and close button stay put while long forms scroll. */}
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: -12, mt: -1.5, pt: 1.5, pb: 0.5, bgcolor: 'background.paper', zIndex: 2 }}>
+              <Typography variant="subtitle2">{`Edit ${editingView ? editingView.title : editingNode.type}`}</Typography>
+              <IconButton
+                size="small" aria-label="Close edit panel"
+                onClick={() => setEditPanelClosed(true)}><Icon name="Close" size={16} /></IconButton>
+            </Box>
+            {editForm}
+          </Paper>}
+        </Box>
+        <TemplateManagerDialog
+          open={templateManagerOpen}
+          editTarget={editTarget}
+          onClose={() => { setTemplateManagerOpen(false); setEditTarget(null); }}
+          onSave={saveTemplate} />
+        <SaveWorkflowDialog
+          open={saveWorkflowOpen}
+          defaultName={currentWorkflowName}
+          onClose={() => setSaveWorkflowOpen(false)}
+          onSave={saveWorkflow} />
+        <GenerateWorkflowDialog
+          open={generateOpen}
+          onClose={() => setGenerateOpen(false)}
+          onOpen={openGeneratedWorkflow} />
+        <ConfirmDialog
+          open={!!confirmState}
+          message={confirmState && confirmState.message}
+          confirmLabel={confirmState && confirmState.confirmLabel}
+          confirmColor={confirmState && confirmState.confirmColor}
+          onCancel={() => setConfirmState(null)}
+          onConfirm={() => { const action = confirmState && confirmState.action; setConfirmState(null); if (action) action(); }} />
+        <IssuesDialog
+          open={!!issuesDialog}
+          runBlocked={!!(issuesDialog && issuesDialog.runBlocked)}
+          issues={issues}
+          onClose={() => setIssuesDialog(null)}
+          onFocusNode={id => { setIssuesDialog(null); focusNode(id); }}
+          onRemoveEdge={deleteEdge} />
+        <Snackbar
+          open={!!toast} autoHideDuration={5000} onClose={() => setToast(null)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
+          <Alert severity="error" onClose={() => setToast(null)}>{toast || ''}</Alert>
+        </Snackbar>
+        {/* Covers everything (dialogs too) while api_server.py can't be reached — nothing */}
+        {/* node-type-specific can be drawn or edited without it. */}
+        {serverState !== 'ok' && <Box
+          data-testid="server-overlay"
+          sx={{ position: 'fixed', inset: 0, zIndex: 2000, bgcolor: 'rgba(255,255,255,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Paper elevation={6} sx={{ p: 2.5, display: 'flex', alignItems: 'center', gap: 2, maxWidth: 520 }}>
+            <CircularProgress size={24} />
+            <Box>
+              <Typography variant="body2">{serverState === 'connecting'
                 ? `Connecting to api_server.py (${CODEX_API_BASE})…`
-                : `Not connected to api_server.py (${CODEX_API_BASE}) — editing is paused until it answers again. Retrying…`),
-              // Also shown on GitHub Pages, where the server must run on the viewer's own PC.
-              serverState !== 'connecting' && h(Typography, { variant: 'caption', component: 'div', sx: { mt: 1, color: 'text.secondary' } },
-                'Start it in the telar-de-ideas folder: uvicorn api_server:app --host 127.0.0.1 --port 9014 (see README.md).'))
-          )
-        ),
-        h(Box, { sx: { position: 'fixed', right: 24, bottom: 24, display: 'flex', gap: 1.5, zIndex: 6 } },
-          h(Tooltip, { title: historyOpen ? 'Hide run history' : 'Show run history' },
-            h(Fab, {
-              'data-testid': 'history-fab', size: 'medium', color: historyOpen ? 'secondary' : 'default',
-              onClick: () => setHistoryOpen(o => !o),
-            }, h(Icon, { name: 'History', size: 22 }))
-          ),
-          h(Tooltip, { title: 'Reset every node’s run results (AI Node output, Gate/Queue/Move status) — inputs and wiring are untouched' },
-            h('span', null, h(Fab, {
-              color: 'default', size: 'medium',
-              disabled: isRunningWorkflow,
-              onClick: resetResults,
-            }, h(Icon, { name: 'Replay', size: 22 })))
-          ),
-          h(Tooltip, { title: 'Stop the running workflow (and any Delay still counting down)' },
-            h('span', null, h(Fab, {
-              color: 'error', size: 'medium',
-              disabled: !isRunningWorkflow && !runLive,
-              onClick: () => runner.stopWorkflow(),
-            }, h(Icon, { name: 'Stop', size: 22 })))
-          ),
-          h(Tooltip, { title: 'Run the workflow (AI Nodes in dependency order, plus any Move/Queue whose inputs are ready)' },
-            h('span', null, h(Fab, {
-              color: 'primary', size: 'medium',
+                : `Not connected to api_server.py (${CODEX_API_BASE}) — editing is paused until it answers again. Retrying…`}</Typography>
+              {/* Also shown on GitHub Pages, where the server must run on the viewer's own PC. */}
+              {serverState !== 'connecting' && <Typography variant="caption" component="div" sx={{ mt: 1, color: 'text.secondary' }}>
+                Start it in the telar-de-ideas folder: uvicorn api_server:app --host 127.0.0.1 --port 9014 (see README.md).
+              </Typography>}
+            </Box>
+          </Paper>
+        </Box>}
+        <Box sx={{ position: 'fixed', right: 24, bottom: 24, display: 'flex', gap: 1.5, zIndex: 6 }}>
+          <Tooltip title={historyOpen ? 'Hide run history' : 'Show run history'}>
+            <Fab
+              data-testid="history-fab" size="medium" color={historyOpen ? 'secondary' : 'default'}
+              onClick={() => setHistoryOpen(o => !o)}><Icon name="History" size={22} /></Fab>
+          </Tooltip>
+          <Tooltip title="Reset every node’s run results (AI Node output, Gate/Queue/Move status) — inputs and wiring are untouched">
+            <span><Fab
+              color="default" size="medium"
+              disabled={isRunningWorkflow}
+              onClick={resetResults}><Icon name="Replay" size={22} /></Fab></span>
+          </Tooltip>
+          <Tooltip title="Stop the running workflow (and any Delay still counting down)">
+            <span><Fab
+              color="error" size="medium"
+              disabled={!isRunningWorkflow && !runLive}
+              onClick={() => runner.stopWorkflow()}><Icon name="Stop" size={22} /></Fab></span>
+          </Tooltip>
+          <Tooltip title="Run the workflow (AI Nodes in dependency order, plus any Move/Queue whose inputs are ready)">
+            <span><Fab
+              color="primary" size="medium"
               // A graph needs a node of a RUNNABLE type (AI Node, Move, Queue —
               // the ones whose effects only happen in a run) for Run to do anything.
-              disabled: isRunningWorkflow || !nodeList.some(n => (typesByType[n.type] || {}).runnable),
-              onClick: () => runner.runWorkflow(),
-            }, isRunningWorkflow ? h(CircularProgress, { size: 22, thickness: 5, color: 'inherit' }) : h(Icon, { name: 'PlayArrow', size: 22 })))
-          )
-        )
-      );
+              disabled={isRunningWorkflow || !nodeList.some(n => (typesByType[n.type] || {}).runnable)}
+              onClick={() => runner.runWorkflow()}>{isRunningWorkflow ? <CircularProgress size={22} thickness={5} color="inherit" /> : <Icon name="PlayArrow" size={22} />}</Fab></span>
+          </Tooltip>
+        </Box>
+      </Box>;
     }
 
     // FlowApp calls useReactFlow(), which only works inside a provider.
     function App() {
-      return h(ThemeProvider, { theme: THEME }, h(ReactFlowProvider, null, h(FlowApp)));
+      return <ThemeProvider theme={THEME}><ReactFlowProvider><FlowApp /></ReactFlowProvider></ThemeProvider>;
     }
 
     const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(h(App));
+    root.render(<App />);
   </script>
 </body>
 </html>

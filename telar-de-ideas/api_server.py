@@ -22,6 +22,7 @@ from data import (
     RUN_WAIT_MAX_SEC,
     CodexJobRequest,
     EvaluateRequest,
+    GenerateWorkflowRequest,
     MoveFolderRequest,
     NodeSaveRequest,
     OpenPathRequest,
@@ -161,6 +162,16 @@ def create_codex_job(req: CodexJobRequest):
 
     # A resend with the same operation_id gets the first call's job_id back.
     return common.start_codex_job(prompt, req.output_schema, req.node_id, req.operation_id)
+
+
+# Generates a workflow from a plain-words request (common.run_generate_job). Poll
+# GET /codex/jobs/{id}; its output holds the workflow, which is not saved.
+@app.post("/workflows/generate")
+def generate_workflow(req: GenerateWorkflowRequest):
+    request = req.request.strip()
+    if not request:
+        raise HTTPException(status_code=400, detail="Request is required.")
+    return common.start_generate_job(request)
 
 
 @app.get("/codex/jobs")

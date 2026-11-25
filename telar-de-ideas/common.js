@@ -228,6 +228,25 @@ async function deleteWorkflowRequest(id) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
 }
 
+// Workflow generation: resolves to { job_id }; poll it with fetchCodexJobRequest.
+async function generateWorkflowRequest(request) {
+  const res = await fetch(`${CODEX_API_BASE}/workflows/generate`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ request }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+async function fetchCodexJobRequest(jobId) {
+  const res = await fetch(`${CODEX_API_BASE}/codex/jobs/${jobId}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+async function stopCodexJobRequest(jobId) {
+  await fetch(`${CODEX_API_BASE}/codex/jobs/${jobId}/stop`, { method: 'POST' });
+}
+
 // --- Server-side runs (api_server.py /runs, see RunClient below) ---
 // Each resolves to the run's snapshot (GET /runs/{id} shape).
 async function startRunRequest(body) {

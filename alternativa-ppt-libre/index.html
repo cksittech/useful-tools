@@ -1,0 +1,1166 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Alternativa ppt Libre</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; }
+    .slide-input {
+      display: block; width: 100%; border: none; outline: none; resize: none; background: transparent;
+      font: inherit; color: inherit; line-height: 1.25; overflow: hidden; field-sizing: content;
+      padding: 0.1em 0.2em; border-radius: 3px;
+    }
+    .slide-input:focus { background: rgba(31, 111, 235, 0.07); }
+    .slide-input::placeholder { color: #b6bcc6; }
+  </style>
+  <script src="lib/react.min.js"></script>
+  <script src="lib/react-dom.min.js"></script>
+  <script src="lib/material-ui.min.js"></script>
+  <script src="lib/babel.min.js"></script>
+  <script src="lib/jszip.min.js"></script>
+  <script src="data.js"></script>
+  <script src="common.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" data-presets="react">
+    const {
+      Alert, AppBar, Box, Button, ButtonGroup, Checkbox, Chip, CircularProgress, CssBaseline, Dialog, DialogActions,
+      DialogContent, DialogTitle, Divider, FormControlLabel, MenuItem, Paper, Select, Snackbar, Tab, Table, TableBody, TableCell,
+      TableHead, TableRow, Tabs, TextField, Toolbar, Tooltip, Typography,
+    } = MaterialUI;
+
+    // Keys identifying block inputs on screen.
+    let keySeq = 0;
+    const newKey = () => `b${++keySeq}`;
+
+    // Saves a blob as a file.
+    function saveBlob(blob, name) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    // --- Markdown editor ---
+    // A transparent textarea over a highlighted copy of the same text.
+
+    function MarkdownEditor({ value, onChange, onCursor, onKeyDown, textareaRef, preRef }) {
+      const lines = React.useMemo(() => value.split('\n'), [value]);
+      const syncScroll = () => {
+        preRef.current.scrollTop = textareaRef.current.scrollTop;
+        preRef.current.scrollLeft = textareaRef.current.scrollLeft;
+      };
+      React.useLayoutEffect(syncScroll, [value]);
+      const reportCursor = () => onCursor(lineOfOffset(value, textareaRef.current.selectionStart));
+      return (
+        <Box sx={{ position: 'relative', flex: 1, minHeight: 0, bgcolor: '#fff' }}>
+          <pre
+            ref={preRef}
+            aria-hidden="true"
+            style={{ ...EDITOR_LAYER, pointerEvents: 'none', color: MD_COLORS.text, scrollbarColor: 'transparent transparent' }}
+          >
+            {lines.map((line, i) => (
+              <span key={i} data-line={i}>
+                {highlightLine(line).map(([cls, text], k) => (
+                  <span key={k} style={{ color: MD_COLORS[cls] }}>{text}</span>
+                ))}
+                {'\n'}
+              </span>
+            ))}
+            {' '}
+          </pre>
+          <textarea
+            ref={textareaRef}
+            value={value}
+            spellCheck={false}
+            placeholder={'# Title\n\n## Chapter\n\n### Slide\n\n- Bullet'}
+            onChange={(e) => onChange(e.target.value)}
+            onScroll={syncScroll}
+            onSelect={reportCursor}
+            onClick={reportCursor}
+            onKeyDown={onKeyDown}
+            style={{ ...EDITOR_LAYER, color: 'transparent', caretColor: '#111', background: 'transparent', resize: 'none', outline: 'none' }}
+          />
+        </Box>
+      );
+    }
+
+    // --- Slide editor ---
+
+    // Date, footer text and slide number of a slide (read-only here, set in the layout dialog).
+    function SlideFooter({ view, number }) {
+      const style = view.types[SLOT_FOOTER];
+      return footerItems(view.design, number, new Date()).map(({ id, text }) => (
+        <Box key={id} data-footer={id} sx={{
+          ...frameBox(view.footer_frames[id].frame), display: 'flex', flexDirection: 'column', justifyContent: 'center',
+          textAlign: ALIGN_CSS[view.footer_frames[id].align], fontSize: ptToCqw(style.sizes[0] / 100),
+          ...textStyleCss(style), textDecoration: style.underline ? 'underline' : 'none',
+          whiteSpace: 'nowrap', overflow: 'hidden', userSelect: 'none',
+        }}>
+          {text}
+        </Box>
+      ));
+    }
+
+    // One editable slide. Edits are kept in a local draft and reported with onDraft; while
+    // the slide has focus the draft is not overwritten by session updates (except forceSync).
+    function SlideCard({
+      slide, number, active, forceSync, isFirst, isLast, cardRef, view,
+      onDraft, onLeave, onOp, onFocusSlide, onUndo, onRedo,
+    }) {
+      const [draft, setDraft] = React.useState(() => draftFromSlide(slide, newKey));
+      const focusedRef = React.useRef(false);
+      const inputs = React.useRef(new Map());
+      const titleRef = React.useRef(null);
+      const focusRequest = React.useRef(null);
+      const draftRef = React.useRef(draft);
+      draftRef.current = draft;
+
+      React.useEffect(() => {
+        if (!focusedRef.current && !draftMatchesSlide(draftRef.current, slide)) {
+          setDraft(draftFromSlide(slide, keysFrom(draftRef.current, newKey)));
+        }
+      }, [slide]);
+
+      React.useEffect(() => {
+        if (forceSync) setDraft(draftFromSlide(slide, keysFrom(draftRef.current, newKey)));
+      }, [forceSync]);
+
+      React.useLayoutEffect(() => {
+        const req = focusRequest.current;
+        if (!req) return;
+        focusRequest.current = null;
+        const el = req.key === 'title' ? titleRef.current : inputs.current.get(req.key);
+        if (el) {
+          el.focus();
+          const pos = Math.min(req.pos, el.value.length);
+          el.setSelectionRange(pos, pos);
+        }
+      });
+
+      const kind = slide.kind;
+      const labels = numberLabels(draft.blocks, view.types[BLOCK_NUMBER].scheme);
+
+      const commit = (next, focus) => {
+        if (focus === 'title') focusRequest.current = { key: 'title', pos: 0 };
+        else if (focus) focusRequest.current = { key: next.blocks[focus.index].key, pos: focus.pos };
+        setDraft(next);
+        onDraft(slide.id, { title: next.title, blocks: plainBlocks(next.blocks) });
+      };
+      const setBlocks = (result) => {
+        if (!result) return;
+        commit({ ...draft, blocks: result.blocks }, result.focus || 'title');
+      };
+      const defaultType = kind === KIND_NORMAL ? BLOCK_BULLET : BLOCK_PARA;
+
+      const handleUndoKeys = (e) => {
+        if (undoKey(e)) { e.preventDefault(); onUndo(); return true; }
+        if (redoKey(e)) { e.preventDefault(); onRedo(); return true; }
+        return false;
+      };
+
+      const onTitleKeyDown = (e) => {
+        if (handleUndoKeys(e) || e.nativeEvent.isComposing || e.keyCode === 229) return;
+        if (e.key === 'Enter' || (e.key === 'ArrowDown' && e.target.selectionEnd === e.target.value.length)) {
+          e.preventDefault();
+          if (draft.blocks.length) focusRequest.current = { key: draft.blocks[0].key, pos: 0 };
+          else if (e.key === 'Enter') { setBlocks(insertBlock(draft.blocks, -1, defaultType, newKey)); return; }
+          setDraft({ ...draft });
+        }
+      };
+
+      const onBlockKeyDown = (e, i) => {
+        if (handleUndoKeys(e) || e.nativeEvent.isComposing || e.keyCode === 229) return;
+        const el = e.target;
+        const start = el.selectionStart;
+        const end = el.selectionEnd;
+        const blocks = draft.blocks;
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          const cut = blocks.map((b, k) => (k === i ? { ...b, text: el.value.slice(0, start) + el.value.slice(end) } : b));
+          setBlocks(splitBlock(cut, i, start, newKey));
+        } else if (e.key === 'Tab') {
+          e.preventDefault();
+          setBlocks({ blocks: tabBlock(blocks, i, e.shiftKey ? -1 : 1), focus: { index: i, pos: start } });
+        } else if (numberingKey(e)) {
+          e.preventDefault();
+          setBlocks({ blocks: toggleNumbering(blocks, i), focus: { index: i, pos: start } });
+        } else if (e.key === 'Backspace' && start === 0 && end === 0) {
+          const result = backspaceBlock(blocks, i);
+          if (result) { e.preventDefault(); setBlocks(result); } else if (!blocks[i].text) {
+            e.preventDefault();
+            setBlocks(removeBlock(blocks, i));
+          }
+        } else if (e.key === 'ArrowUp' && start === 0 && end === 0) {
+          e.preventDefault();
+          focusRequest.current = i > 0 ? { key: blocks[i - 1].key, pos: blocks[i - 1].text.length } : { key: 'title', pos: 0 };
+          setDraft({ ...draft });
+        } else if (e.key === 'ArrowDown' && start === el.value.length && i < blocks.length - 1) {
+          e.preventDefault();
+          focusRequest.current = { key: blocks[i + 1].key, pos: 0 };
+          setDraft({ ...draft });
+        }
+      };
+
+      const onFocus = () => {
+        if (!focusedRef.current) {
+          focusedRef.current = true;
+          onFocusSlide(slide.id);
+        }
+      };
+      const onBlur = (e) => {
+        if (e.currentTarget.contains(e.relatedTarget)) return;
+        focusedRef.current = false;
+        onLeave();
+      };
+
+      const titleAlign = ALIGN_CSS[view.title_align];
+      const titleStyle = view.types[SLOT_TITLE];
+      const bodyAlign = ALIGN_CSS[view.body_align];
+
+      return (
+        <Paper
+          ref={cardRef}
+          variant="outlined"
+          onFocus={onFocus}
+          onBlur={onBlur}
+          sx={{ p: 1, borderColor: active ? 'primary.main' : 'divider', borderWidth: active ? 2 : 1 }}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1, flexWrap: 'wrap' }}>
+            <Typography variant="subtitle2" sx={{ minWidth: 28 }}>{number}</Typography>
+            <ButtonGroup size="small" variant="outlined">
+              {Object.keys(KIND_LABELS).map((k) => (
+                <Button
+                  key={k}
+                  variant={k === kind ? 'contained' : 'outlined'}
+                  onClick={() => { if (k !== kind) onOp({ op: 'set_kind', id: slide.id, kind: k }); }}
+                >
+                  {KIND_LABELS[k]}
+                </Button>
+              ))}
+            </ButtonGroup>
+            <ButtonGroup size="small" variant="outlined">
+              <Tooltip title={kind === KIND_CHAPTER ? 'Move chapter up' : 'Move up'}>
+                <span><Button disabled={isFirst} onClick={() => onOp({ op: 'move', id: slide.id, direction: -1 })}>↑</Button></span>
+              </Tooltip>
+              <Tooltip title={kind === KIND_CHAPTER ? 'Move chapter down' : 'Move down'}>
+                <span><Button disabled={isLast} onClick={() => onOp({ op: 'move', id: slide.id, direction: 1 })}>↓</Button></span>
+              </Tooltip>
+            </ButtonGroup>
+            <ButtonGroup size="small" variant="outlined">
+              <Button onClick={() => onOp({ op: 'insert', id: slide.id, kind: KIND_NORMAL })}>+ Slide</Button>
+              <Button onClick={() => onOp({ op: 'insert', id: slide.id, kind: KIND_CHAPTER })}>+ Chapter</Button>
+              <Button onClick={() => onOp({ op: 'insert', id: slide.id, kind: KIND_TITLE })}>+ Title</Button>
+            </ButtonGroup>
+            <Box sx={{ flex: 1 }} />
+            <Button size="small" color="error" onClick={() => onOp({ op: 'delete', id: slide.id })}>Delete</Button>
+          </Box>
+
+          <Box sx={{ ...SLIDE_SURFACE, ...backgroundCss(view) }}>
+            <Box sx={{
+              ...frameBox(view.title_frame), display: 'flex', flexDirection: 'column',
+              justifyContent: ANCHOR_CSS[view.title_anchor], fontSize: ptToCqw(view.title_size / 100),
+              ...textStyleCss(titleStyle),
+            }}>
+              <textarea
+                ref={titleRef}
+                className="slide-input"
+                rows={1}
+                value={draft.title}
+                placeholder="Title"
+                onChange={(e) => commit({ ...draft, title: e.target.value.replace(/\n/g, ' ') })}
+                onKeyDown={onTitleKeyDown}
+                style={{ lineHeight: 1.1, textAlign: titleAlign, textDecoration: titleStyle.underline ? 'underline' : 'none' }}
+              />
+            </Box>
+            <Box sx={{ ...frameBox(view.body_frame), overflowY: 'auto', textAlign: bodyAlign }}>
+              {draft.blocks.map((block, i) => {
+                const isList = LIST_BLOCK_TYPES.includes(block.type);
+                const style = view.types[block.type];
+                return (
+                  <Box key={block.key} sx={{
+                    display: 'flex', alignItems: 'baseline', fontSize: ptToCqw(style.sizes[block.level] / 100), mt: '0.3em',
+                    pl: isList ? emuToCqw(block.level * LEVEL_INDENT) : 0, ...textStyleCss(style),
+                  }}>
+                    {isList && (
+                      <Box sx={{ width: emuToCqw(LIST_HANG), flexShrink: 0, textAlign: 'left', userSelect: 'none' }}>
+                        {block.type === BLOCK_NUMBER ? labels[i] : style.char}
+                      </Box>
+                    )}
+                    <textarea
+                      ref={(el) => { if (el) inputs.current.set(block.key, el); else inputs.current.delete(block.key); }}
+                      className="slide-input"
+                      rows={1}
+                      value={block.text}
+                      placeholder={BLOCK_TYPE_LABELS[block.type]}
+                      onChange={(e) => commit({ ...draft, blocks: draft.blocks.map((b, k) => (k === i ? { ...b, text: e.target.value } : b)) })}
+                      onKeyDown={(e) => onBlockKeyDown(e, i)}
+                      style={{ textAlign: bodyAlign, textDecoration: style.underline ? 'underline' : 'none' }}
+                    />
+                  </Box>
+                );
+              })}
+              <Button
+                size="small"
+                sx={{ mt: 0.5, opacity: 0.5, '&:hover': { opacity: 1 } }}
+                onClick={() => setBlocks(insertBlock(draft.blocks, draft.blocks.length - 1, defaultType, newKey))}
+              >
+                + Item
+              </Button>
+            </Box>
+            <SlideFooter view={view} number={number} />
+          </Box>
+        </Paper>
+      );
+    }
+
+    // --- Layout dialog ---
+
+    // Read-only sample slide of a kind, drawn the same way as the slide editor.
+    function SlidePreview({ kind, view }) {
+      const blocks = PREVIEW_BLOCKS[kind];
+      const labels = numberLabels(blocks, view.types[BLOCK_NUMBER].scheme);
+      const bodyAlign = ALIGN_CSS[view.body_align];
+      return (
+        <Box data-testid="layout-preview" sx={{ ...SLIDE_SURFACE, ...backgroundCss(view), overflow: 'hidden', lineHeight: 1.25 }}>
+          <Box sx={{
+            ...frameBox(view.title_frame), display: 'flex', flexDirection: 'column',
+            justifyContent: ANCHOR_CSS[view.title_anchor], fontSize: ptToCqw(view.title_size / 100),
+            textAlign: ALIGN_CSS[view.title_align], ...textStyleCss(view.types[SLOT_TITLE]),
+            textDecoration: view.types[SLOT_TITLE].underline ? 'underline' : 'none',
+          }}>
+            {PREVIEW_TITLE}
+          </Box>
+          <Box sx={{ ...frameBox(view.body_frame), textAlign: bodyAlign }}>
+            {blocks.map((block, i) => {
+              const isList = LIST_BLOCK_TYPES.includes(block.type);
+              const style = view.types[block.type];
+              return (
+                <Box key={i} sx={{
+                  display: 'flex', alignItems: 'baseline', fontSize: ptToCqw(style.sizes[block.level] / 100), mt: '0.3em',
+                  pl: isList ? emuToCqw(block.level * LEVEL_INDENT) : 0, ...textStyleCss(style),
+                }}>
+                  {isList && (
+                    <Box sx={{ width: emuToCqw(LIST_HANG), flexShrink: 0, textAlign: 'left' }}>
+                      {block.type === BLOCK_NUMBER ? labels[i] : style.char}
+                    </Box>
+                  )}
+                  <Box sx={{ flex: 1, textDecoration: style.underline ? 'underline' : 'none' }}>{block.text}</Box>
+                </Box>
+              );
+            })}
+          </Box>
+          <SlideFooter view={view} number={PREVIEW_NUMBER} />
+        </Box>
+      );
+    }
+
+    // Color picker that reports its value only after the pointer settles.
+    function ColorField({ value, onChange }) {
+      const [local, setLocal] = React.useState(value);
+      const timer = React.useRef(null);
+      React.useEffect(() => { setLocal(value); }, [value]);
+      return (
+        <input
+          type="color"
+          value={`#${local}`}
+          onChange={(e) => {
+            const next = e.target.value.slice(1).toUpperCase();
+            setLocal(next);
+            clearTimeout(timer.current);
+            timer.current = setTimeout(() => onChange(next), SLIDE_SYNC_DELAY);
+          }}
+          style={{ width: 36, height: 28, padding: 0, border: '1px solid #c4c9d4', background: 'none', cursor: 'pointer' }}
+        />
+      );
+    }
+
+    // Footer text field that reports its value after typing stops, and takes new values only when not focused.
+    function FooterTextField({ value, onChange }) {
+      const [local, setLocal] = React.useState(value);
+      const timer = React.useRef(null);
+      const focused = React.useRef(false);
+      React.useEffect(() => { if (!focused.current) setLocal(value); }, [value]);
+      const flush = (text) => {
+        clearTimeout(timer.current);
+        timer.current = null;
+        onChange(text);
+      };
+      return (
+        <TextField
+          size="small"
+          label="Footer text"
+          value={local}
+          onFocus={() => { focused.current = true; }}
+          onBlur={() => { focused.current = false; if (timer.current) flush(local); }}
+          onChange={(e) => {
+            const text = e.target.value;
+            setLocal(text);
+            clearTimeout(timer.current);
+            timer.current = setTimeout(() => flush(text), SLIDE_SYNC_DELAY);
+          }}
+          sx={{ flex: 1, minWidth: 220 }}
+        />
+      );
+    }
+
+    // Background and footer settings of a slide kind.
+    function DesignSettings({ design, onChange, onImage }) {
+      const imageRef = React.useRef(null);
+      return (
+        <Box sx={{ px: 2, mt: 2, display: 'flex', flexDirection: 'column', gap: 1 }}>
+          <Box data-slot="background" sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
+            <Typography variant="body2" sx={{ mr: 1 }}>Background</Typography>
+            <ColorField value={design.bg_color || THEME_BACKGROUND_COLOR} onChange={(color) => onChange({ bg_color: color })} />
+            <Button size="small" disabled={!design.bg_color} onClick={() => onChange({ bg_color: null })}>Reset</Button>
+            <Divider orientation="vertical" flexItem />
+            <Button size="small" variant="outlined" onClick={() => imageRef.current.click()}>Choose image</Button>
+            <Button size="small" disabled={!design.bg_image} onClick={() => onChange({ bg_image: null })}>Remove image</Button>
+            <input
+              ref={imageRef}
+              type="file"
+              accept=".png,.jpg,.jpeg"
+              hidden
+              onChange={(e) => { onImage(e.target.files[0]); e.target.value = ''; }}
+            />
+          </Box>
+          <Typography variant="caption" color="text.secondary">
+            PNG or JPEG, stretched to the slide. An image is used instead of the color.
+          </Typography>
+          <Box data-slot="footer-settings" sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
+            <FooterTextField value={design.footer_text} onChange={(text) => onChange({ footer_text: text })} />
+            <FormControlLabel
+              label="Slide number"
+              control={<Checkbox size="small" checked={design.show_number} onChange={(e) => onChange({ show_number: e.target.checked })} />}
+            />
+            <FormControlLabel
+              label="Date"
+              control={<Checkbox size="small" checked={design.show_date} onChange={(e) => onChange({ show_date: e.target.checked })} />}
+            />
+          </Box>
+        </Box>
+      );
+    }
+
+    // Settings of one text type of a slide kind.
+    function TextStyleRow({ kind, slot, layouts, onProp, onReset }) {
+      const { catalog } = layouts;
+      const view = layouts.view[kind];
+      const style = view.types[slot];
+      const size = slot === SLOT_TITLE ? view.title_size : style.sizes[0];
+      return (
+        <TableRow data-slot={slot}>
+          <TableCell sx={{ whiteSpace: 'nowrap' }}>{TEXT_SLOT_LABELS[slot]}</TableCell>
+          <TableCell>
+            <Select
+              size="small"
+              fullWidth
+              displayEmpty
+              value={style.font || ''}
+              onChange={(e) => onProp(slot, 'font', e.target.value || null)}
+              sx={{ minWidth: 170 }}
+            >
+              <MenuItem value="">Theme font</MenuItem>
+              {catalog.fonts.map((f) => <MenuItem key={f} value={f} sx={{ fontFamily: `"${f}"` }}>{f}</MenuItem>)}
+            </Select>
+          </TableCell>
+          <TableCell>
+            <Select size="small" fullWidth value={size} onChange={(e) => onProp(slot, 'size', e.target.value)}>
+              {catalog.sizes.map((s) => <MenuItem key={s} value={s}>{s / 100} pt</MenuItem>)}
+            </Select>
+          </TableCell>
+          <TableCell>
+            <ButtonGroup size="small">
+              {Object.keys(STYLE_TOGGLES).map((prop) => (
+                <Button
+                  key={prop}
+                  aria-label={prop}
+                  variant={style[prop] ? 'contained' : 'outlined'}
+                  onClick={() => onProp(slot, prop, !style[prop])}
+                >
+                  {STYLE_TOGGLES[prop]}
+                </Button>
+              ))}
+            </ButtonGroup>
+          </TableCell>
+          <TableCell>
+            {slot === BLOCK_BULLET && (
+              <Select size="small" fullWidth value={style.char} onChange={(e) => onProp(slot, 'char', e.target.value)}>
+                {catalog.bullets.map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}
+              </Select>
+            )}
+            {slot === BLOCK_NUMBER && (
+              <Select size="small" fullWidth value={style.scheme} onChange={(e) => onProp(slot, 'scheme', e.target.value)}>
+                {catalog.numbers.map((n) => <MenuItem key={n.id} value={n.id}>{n.label}</MenuItem>)}
+              </Select>
+            )}
+          </TableCell>
+          <TableCell>
+            <ColorField value={style.color || THEME_TEXT_COLOR} onChange={(color) => onProp(slot, 'color', color)} />
+          </TableCell>
+          <TableCell>
+            <Button size="small" disabled={!hasSlotStyle(layouts.styles, kind, slot)} onClick={() => onReset(slot)}>
+              Reset
+            </Button>
+          </TableCell>
+        </TableRow>
+      );
+    }
+
+    // --- App ---
+
+    function App() {
+      const [md, setMd] = React.useState('');
+      const [slides, setSlides] = React.useState([]);
+      const [lines, setLines] = React.useState([]);
+      const [canUndo, setCanUndo] = React.useState(false);
+      const [canRedo, setCanRedo] = React.useState(false);
+      const [loaded, setLoaded] = React.useState(false);
+      const [loadError, setLoadError] = React.useState('');
+      const [dirty, setDirty] = React.useState(false);
+      const [syncError, setSyncError] = React.useState('');
+      const [notice, setNotice] = React.useState(null);
+      const [activeId, setActiveId] = React.useState(null);
+      const [forceSync, setForceSync] = React.useState(0);
+      const [layouts, setLayouts] = React.useState(null);
+      const [layoutOpen, setLayoutOpen] = React.useState(false);
+      const [layoutKind, setLayoutKind] = React.useState(KIND_NORMAL);
+      const [generateOpen, setGenerateOpen] = React.useState(false);
+      const [generateMode, setGenerateMode] = React.useState(GENERATE_NEW);
+      const [generateText, setGenerateText] = React.useState('');
+      const [generating, setGenerating] = React.useState(false);
+      const [generateError, setGenerateError] = React.useState('');
+      const [apiReady, setApiReady] = React.useState(null);  // null = checking
+
+      const mdRef = React.useRef('');
+      const textareaRef = React.useRef(null);
+      const preRef = React.useRef(null);
+      const fileRef = React.useRef(null);
+      const sessionRef = React.useRef(null);
+      const generateAbort = React.useRef(null);
+      const storageRef = React.useRef(null);
+      // URLs handed out for background images, by name. A name comes from the content, so it never goes stale.
+      const imageUrls = React.useRef(new Map());
+      const savedDraft = React.useRef(null);
+      const storageWarned = React.useRef(false);
+      const mdPending = React.useRef(false);
+      const mdTimer = React.useRef(null);
+      const slidePending = React.useRef(new Map());
+      const slideTimer = React.useRef(null);
+      const selectionRestore = React.useRef(null);
+      const cardRefs = React.useRef(new Map());
+      const linesRef = React.useRef([]);
+      const slidesRef = React.useRef([]);
+      linesRef.current = lines;
+      slidesRef.current = slides;
+
+      const showError = (e) => setNotice({ severity: 'error', text: e.message || String(e) });
+
+      // Runs one change of the session; a failure shows up as a sync error.
+      const applyEdit = (edit) => {
+        try {
+          edit(sessionRef.current);
+          setSyncError('');
+        } catch (e) {
+          setSyncError(e.message);
+          showError(e);
+        }
+      };
+
+      // Keeping work in the browser failed: said once, editing goes on.
+      const warnStorage = () => {
+        if (storageWarned.current) return;
+        storageWarned.current = true;
+        setNotice({ severity: 'warning', text: 'This browser cannot keep your work. Save your files before closing the page.' });
+      };
+
+      const keepSettings = () => saveSettings(storageRef.current, sessionRef.current.deck).catch(warnStorage);
+
+      // Puts new markdown in the editor, keeping the caret where the text around it is unchanged.
+      const replaceEditor = (next) => {
+        const prev = mdRef.current;
+        if (prev === next) return;
+        const ta = textareaRef.current;
+        if (ta && document.activeElement === ta) {
+          selectionRestore.current = {
+            start: mapOffset(prev, next, ta.selectionStart),
+            end: mapOffset(prev, next, ta.selectionEnd),
+          };
+        }
+        mdRef.current = next;
+        setMd(next);
+      };
+
+      React.useLayoutEffect(() => {
+        const sel = selectionRestore.current;
+        if (sel && textareaRef.current) {
+          textareaRef.current.setSelectionRange(sel.start, sel.end);
+          selectionRestore.current = null;
+        }
+      }, [md]);
+
+      // Applies a session state. Markdown is replaced only for changes made on the slide side,
+      // and never over markdown typed since (that is applied next and wins).
+      const applyState = (st, replaceMd, resyncCards = false) => {
+        setSlides(st.slides);
+        setLines(st.lines);
+        setCanUndo(st.can_undo);
+        setCanRedo(st.can_redo);
+        const urls = {};
+        Object.entries(st.images).forEach(([name, data]) => {
+          if (!imageUrls.current.has(name)) imageUrls.current.set(name, URL.createObjectURL(imageBlob(name, data)));
+          urls[name] = imageUrls.current.get(name);
+        });
+        setLayouts(withBackgroundUrls(st.layouts, urls));
+        if (replaceMd && !mdPending.current) replaceEditor(st.md);
+        if (resyncCards) setForceSync((n) => n + 1);
+        if (st.md !== savedDraft.current) {
+          savedDraft.current = st.md;
+          saveDraft(storageRef.current, st.md).catch(warnStorage);
+        }
+      };
+
+      const flushMd = () => {
+        clearTimeout(mdTimer.current);
+        if (!mdPending.current) return;
+        mdPending.current = false;
+        const text = mdRef.current;
+        applyEdit((session) => {
+          session.applyMarkdown(text);
+          applyState(session.state(), false);
+        });
+      };
+
+      const flushSlides = () => {
+        clearTimeout(slideTimer.current);
+        const pending = [...slidePending.current.entries()];
+        slidePending.current.clear();
+        pending.forEach(([id, draft]) => {
+          applyEdit((session) => {
+            session.applyOp({ op: 'set_slide', id, ...draft });
+            applyState(session.state(), true);
+          });
+        });
+      };
+
+      // Applies every pending edit.
+      const flushAll = () => {
+        flushMd();
+        flushSlides();
+        setDirty(false);
+      };
+
+      React.useEffect(() => {
+        openSession()
+          .then(({ session, db, storageError }) => {
+            sessionRef.current = session;
+            storageRef.current = db;
+            const st = session.state();
+            mdRef.current = st.md;
+            setMd(st.md);
+            if (storageError) storageWarned.current = true;
+            savedDraft.current = st.md;
+            applyState(st, false);
+            setLoaded(true);
+            if (storageError) setNotice({ severity: 'warning', text: 'This browser cannot keep your work. Save your files before closing the page.' });
+          })
+          .catch((e) => setLoadError(e.message));
+      }, []);
+
+      const onMdChange = (value) => {
+        mdRef.current = value;
+        setMd(value);
+        mdPending.current = true;
+        setDirty(true);
+        clearTimeout(mdTimer.current);
+        mdTimer.current = setTimeout(() => { flushMd(); setDirty(slidePending.current.size > 0); }, MD_SYNC_DELAY);
+      };
+
+      const onSlideDraft = (id, draft) => {
+        slidePending.current.set(id, draft);
+        setDirty(true);
+        clearTimeout(slideTimer.current);
+        slideTimer.current = setTimeout(() => { flushSlides(); setDirty(mdPending.current); }, SLIDE_SYNC_DELAY);
+      };
+
+      const runOp = (op) => {
+        flushAll();
+        applyEdit((session) => {
+          session.applyOp(op);
+          applyState(session.state(), true);
+        });
+      };
+
+      const undo = () => {
+        flushAll();
+        applyEdit((session) => {
+          session.undo();
+          applyState(session.state(), true, true);
+        });
+      };
+      const redo = () => {
+        flushAll();
+        applyEdit((session) => {
+          session.redo();
+          applyState(session.state(), true, true);
+        });
+      };
+
+      // Ctrl+Z / Ctrl+Y outside the editors (inputs handle their own).
+      React.useEffect(() => {
+        const onKey = (e) => {
+          const tag = (e.target.tagName || '').toLowerCase();
+          if (tag === 'textarea' || tag === 'input') return;
+          if (undoKey(e)) { e.preventDefault(); undo(); } else if (redoKey(e)) { e.preventDefault(); redo(); }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+      });
+
+      const onMdKeyDown = (e) => {
+        if (undoKey(e)) { e.preventDefault(); undo(); } else if (redoKey(e)) { e.preventDefault(); redo(); }
+      };
+
+      // Caret moved in the markdown: highlight and reveal the slide it is in.
+      const onMdCursor = (line) => {
+        const index = slideIndexAtLine(linesRef.current, line);
+        const slide = slidesRef.current[index];
+        if (!slide || slide.id === activeId) return;
+        setActiveId(slide.id);
+        const el = cardRefs.current.get(slide.id);
+        if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      };
+
+      // A slide got focus: highlight it and scroll the markdown to its heading.
+      const onFocusSlide = (id) => {
+        setActiveId(id);
+        const index = slidesRef.current.findIndex((s) => s.id === id);
+        const line = linesRef.current[index];
+        const span = preRef.current && preRef.current.querySelector(`[data-line="${line}"]`);
+        if (span && textareaRef.current) textareaRef.current.scrollTop = Math.max(0, span.offsetTop - 12);
+      };
+
+      const replaceAll = (st) => {
+        mdPending.current = false;
+        applyState(st, true, true);
+      };
+
+      // A change made in the layout dialog.
+      const sendLayoutChange = (choices, styles) => {
+        flushAll();
+        applyEdit((session) => {
+          session.applyLayouts(choices, styles);
+          keepSettings();
+          applyState(session.state(), false);
+        });
+      };
+      const choosePlacement = (pattern) => sendLayoutChange(
+        { ...layouts.choices, [layoutKind]: { ...layouts.choices[layoutKind], [SLOT_SLIDE]: pattern } },
+        layouts.styles,
+      );
+      const changeStyleProp = (slot, prop, value) => sendLayoutChange(
+        layouts.choices,
+        withStyleProp(layouts.styles, layoutKind, slot, prop, value),
+      );
+      const resetTextStyle = (slot) => sendLayoutChange(
+        layouts.choices,
+        withoutSlotStyle(layouts.styles, layoutKind, slot),
+      );
+
+      const changeDesign = (kind, changes) => {
+        flushAll();
+        applyEdit((session) => {
+          session.applyDesign(kind, changes);
+          keepSettings();
+          applyState(session.state(), false);
+        });
+      };
+      const chooseBackgroundImage = async (kind, file) => {
+        if (!file) return;
+        flushAll();
+        try {
+          const session = sessionRef.current;
+          await session.applyBackgroundImage(kind, new Uint8Array(await file.arrayBuffer()));
+          keepSettings();
+          applyState(session.state(), false);
+        } catch (e) {
+          showError(e);
+        }
+      };
+
+      const newPresentation = () => {
+        if (!window.confirm('Discard the current content and start a new presentation?')) return;
+        flushAll();
+        applyEdit((session) => {
+          session.loadMarkdown('');
+          replaceAll(session.state());
+        });
+      };
+
+      // --- Markdown generation (needs the local API) ---
+
+      const openGenerate = () => {
+        flushAll();
+        setGenerateMode(mdRef.current.trim() ? GENERATE_REVISE : GENERATE_NEW);
+        setGenerateError('');
+        setGenerateOpen(true);
+        checkApi();
+      };
+
+      // The generation form is locked until the API answers (null = still checking).
+      const apiBlocked = apiReady !== true;
+
+      const checkApi = () => {
+        setApiReady(null);
+        apiAvailable().then(setApiReady);
+      };
+
+      // While the dialog is open and the API is down, look again now and then.
+      React.useEffect(() => {
+        if (!generateOpen || apiReady !== false) return undefined;
+        const timer = setInterval(() => apiAvailable().then((ready) => { if (ready) setApiReady(true); }), API_RETRY_DELAY);
+        return () => clearInterval(timer);
+      }, [generateOpen, apiReady]);
+
+      const closeGenerate = () => {
+        if (generateAbort.current) generateAbort.current.abort();
+        setGenerateOpen(false);
+      };
+
+      // Writes the markdown on the API and puts it in place of the current content (one undo step).
+      const runGenerate = async () => {
+        if (generating || apiBlocked || !generateText.trim()) return;
+        flushAll();
+        const controller = new AbortController();
+        generateAbort.current = controller;
+        setGenerating(true);
+        setGenerateError('');
+        try {
+          const md = await generateMarkdown(generateMode, generateText, mdRef.current, controller.signal);
+          applyEdit((session) => {
+            session.applyMarkdown(md, null);
+            replaceAll(session.state());
+          });
+          setGenerateOpen(false);
+          setGenerateText('');
+          setNotice({ severity: 'success', text: generateMode === GENERATE_REVISE
+            ? 'Markdown revised (Undo reverts it).' : 'Markdown generated (Undo reverts it).' });
+        } catch (e) {
+          if (e instanceof ApiUnreachableError) setApiReady(false);
+          else if (e.name !== 'AbortError') setGenerateError(e.message || String(e));
+        } finally {
+          generateAbort.current = null;
+          setGenerating(false);
+        }
+      };
+
+      const openFile = async (file) => {
+        if (!file) return;
+        flushAll();
+        try {
+          const session = sessionRef.current;
+          if (file.name.toLowerCase().endsWith('.pptx')) {
+            const deck = await loadPptx(new Uint8Array(await file.arrayBuffer()));
+            session.reset(deck, deckToMarkdown(deck));
+            keepSettings();
+          } else {
+            session.loadMarkdown(await file.text());
+          }
+          replaceAll(session.state());
+        } catch (e) {
+          showError(e);
+        }
+      };
+
+      const save = async (format) => {
+        flushAll();
+        try {
+          const blob = await exportFile(sessionRef.current, format, mdRef.current);
+          saveBlob(blob, downloadName(slidesRef.current, format));
+        } catch (e) {
+          showError(e);
+        }
+      };
+
+      const status = syncError ? { label: 'Sync error', color: 'error' }
+        : dirty ? { label: 'Editing', color: 'default' }
+          : { label: 'Synced', color: 'success' };
+      const kinds = slides.map((s) => s.kind);
+
+      return (
+        <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column', bgcolor: '#f5f6f8' }}>
+          <CssBaseline />
+          <AppBar position="static" color="default" elevation={1}>
+            <Toolbar variant="dense" sx={{ gap: 1, flexWrap: 'wrap', py: 0.5 }}>
+              <Typography variant="h6" sx={{ mr: 2, whiteSpace: 'nowrap' }}>Alternativa ppt Libre</Typography>
+              <Button size="small" onClick={newPresentation}>New</Button>
+              <Button size="small" onClick={() => fileRef.current.click()}>Open</Button>
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".md,.markdown,.txt,.pptx"
+                hidden
+                onChange={(e) => { openFile(e.target.files[0]); e.target.value = ''; }}
+              />
+              <Divider orientation="vertical" flexItem />
+              <Button size="small" variant="contained" onClick={() => save('pptx')}>Save PPTX</Button>
+              <Button size="small" variant="outlined" onClick={() => save('md')}>Save MD</Button>
+              <Divider orientation="vertical" flexItem />
+              <Button size="small" onClick={() => setLayoutOpen(true)}>Layout</Button>
+              <Button size="small" onClick={openGenerate}>Generate</Button>
+              <Divider orientation="vertical" flexItem />
+              <Tooltip title="Ctrl+Z"><span><Button size="small" disabled={!canUndo} onClick={undo}>Undo</Button></span></Tooltip>
+              <Tooltip title="Ctrl+Y"><span><Button size="small" disabled={!canRedo} onClick={redo}>Redo</Button></span></Tooltip>
+              <Box sx={{ flex: 1 }} />
+              <Typography variant="body2" color="text.secondary">{slides.length} {slides.length === 1 ? 'slide' : 'slides'}</Typography>
+              <Chip size="small" label={status.label} color={status.color} variant="outlined" />
+            </Toolbar>
+          </AppBar>
+
+          {loadError && (
+            <Alert severity="error" sx={{ m: 2 }}>
+              Cannot start: {loadError}
+            </Alert>
+          )}
+
+          {loaded && (
+            <Box sx={{ flex: 1, minHeight: 0, display: 'flex' }}>
+              <Box sx={{ width: '40%', minWidth: 360, display: 'flex', flexDirection: 'column', borderRight: '1px solid #d0d5dd' }}>
+                <Typography variant="caption" color="text.secondary" sx={{ px: 2, pt: 0.5 }}>
+                  # Title / ## Chapter / ### Slide / #### Subheading / - Bullet / 1. Number
+                </Typography>
+                <MarkdownEditor
+                  value={md}
+                  onChange={onMdChange}
+                  onCursor={onMdCursor}
+                  onKeyDown={onMdKeyDown}
+                  textareaRef={textareaRef}
+                  preRef={preRef}
+                />
+              </Box>
+
+              <Box sx={{ flex: 1, minWidth: 0, overflowY: 'auto', p: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <Typography variant="caption" color="text.secondary" align="center">
+                  Tab / Shift+Tab: Subheading ⇄ Body ⇄ Bullet ⇄ Level  |  Alt+N: Bullet ⇄ Number
+                </Typography>
+                {slides.length === 0 && (
+                  <Typography color="text.secondary" align="center" sx={{ mt: 6 }}>No slides.</Typography>
+                )}
+                {slides.map((slide, i) => {
+                  // A chapter moves past what follows its own slides, so it needs something there.
+                  const isLast = slide.kind === KIND_CHAPTER
+                    ? !kinds.slice(i + 1).some((k) => k !== KIND_NORMAL)
+                    : i === slides.length - 1;
+                  return (
+                    <Box key={slide.id} sx={{ maxWidth: 960, width: '100%', mx: 'auto' }}>
+                      <SlideCard
+                        slide={slide}
+                        number={i + 1}
+                        active={slide.id === activeId}
+                        forceSync={forceSync}
+                        isFirst={i === 0}
+                        isLast={isLast}
+                        view={layouts.view[slide.kind]}
+                        cardRef={(el) => { if (el) cardRefs.current.set(slide.id, el); else cardRefs.current.delete(slide.id); }}
+                        onDraft={onSlideDraft}
+                        onLeave={flushSlides}
+                        onOp={runOp}
+                        onFocusSlide={onFocusSlide}
+                        onUndo={undo}
+                        onRedo={redo}
+                      />
+                    </Box>
+                  );
+                })}
+                <Box sx={{ display: 'flex', justifyContent: 'center', gap: 1, pb: 4 }}>
+                  <Button variant="outlined" onClick={() => runOp({ op: 'insert', id: slides.length ? slides[slides.length - 1].id : null, kind: KIND_NORMAL })}>
+                    + Add slide at end
+                  </Button>
+                  <Button variant="outlined" onClick={() => runOp({ op: 'insert', id: slides.length ? slides[slides.length - 1].id : null, kind: KIND_CHAPTER })}>
+                    + Add chapter at end
+                  </Button>
+                  <Button variant="outlined" onClick={() => runOp({ op: 'insert', id: slides.length ? slides[slides.length - 1].id : null, kind: KIND_TITLE })}>
+                    + Add title at end
+                  </Button>
+                </Box>
+              </Box>
+            </Box>
+          )}
+
+          {layouts && (
+            <Dialog open={layoutOpen} onClose={() => setLayoutOpen(false)} maxWidth="xl">
+              <DialogTitle>Layout</DialogTitle>
+              <DialogContent>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                  Applies to the whole presentation, per slide kind. Does not change the Markdown.
+                </Typography>
+                <Tabs value={layoutKind} onChange={(e, kind) => setLayoutKind(kind)} sx={{ mb: 1 }}>
+                  {Object.keys(KIND_LABELS).map((kind) => <Tab key={kind} value={kind} label={KIND_LABELS[kind]} />)}
+                </Tabs>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: 3 }}>
+                <Box>
+                  <Box data-slot="placement" sx={{ display: 'flex', alignItems: 'center', gap: 2, px: 2, mb: 1 }}>
+                    <Typography variant="body2">Slide placement</Typography>
+                    <Select
+                      size="small"
+                      value={layouts.choices[layoutKind][SLOT_SLIDE]}
+                      onChange={(e) => choosePlacement(e.target.value)}
+                      sx={{ minWidth: 170 }}
+                    >
+                      {layouts.catalog.placements[layoutKind].map((p) => <MenuItem key={p.id} value={p.id}>{p.label}</MenuItem>)}
+                    </Select>
+                  </Box>
+                  <Table size="small" sx={{ width: 'auto' }}>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell />
+                        <TableCell>Font</TableCell>
+                        <TableCell>Size</TableCell>
+                        <TableCell>Style</TableCell>
+                        <TableCell>Marker / Format</TableCell>
+                        <TableCell>Color</TableCell>
+                        <TableCell />
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {Object.keys(TEXT_SLOT_LABELS).map((slot) => (
+                        <TextStyleRow
+                          key={slot}
+                          kind={layoutKind}
+                          slot={slot}
+                          layouts={layouts}
+                          onProp={changeStyleProp}
+                          onReset={resetTextStyle}
+                        />
+                      ))}
+                    </TableBody>
+                  </Table>
+                  <DesignSettings
+                    key={layoutKind}
+                    design={layouts.view[layoutKind].design}
+                    onChange={(changes) => changeDesign(layoutKind, changes)}
+                    onImage={(file) => chooseBackgroundImage(layoutKind, file)}
+                  />
+                </Box>
+                <Box sx={{ width: 440, flexShrink: 0 }}>
+                  <Typography variant="caption" color="text.secondary">Preview ({KIND_LABELS[layoutKind]} slide)</Typography>
+                  <SlidePreview kind={layoutKind} view={layouts.view[layoutKind]} />
+                </Box>
+                </Box>
+              </DialogContent>
+              <DialogActions>
+                <Button onClick={() => setLayoutOpen(false)}>Close</Button>
+              </DialogActions>
+            </Dialog>
+          )}
+
+          <Dialog open={generateOpen} onClose={closeGenerate} fullWidth maxWidth="sm">
+            <DialogTitle>Generate Markdown</DialogTitle>
+            <DialogContent>
+              <Box sx={{ position: 'relative' }}>
+                <ButtonGroup size="small" sx={{ mb: 1 }} disabled={generating || apiBlocked}>
+                  <Button
+                    variant={generateMode === GENERATE_REVISE ? 'contained' : 'outlined'}
+                    disabled={!md.trim()}
+                    onClick={() => setGenerateMode(GENERATE_REVISE)}
+                  >
+                    Revise current
+                  </Button>
+                  <Button
+                    variant={generateMode === GENERATE_NEW ? 'contained' : 'outlined'}
+                    onClick={() => setGenerateMode(GENERATE_NEW)}
+                  >
+                    New draft
+                  </Button>
+                </ButtonGroup>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                  {generateMode === GENERATE_REVISE
+                    ? 'Rewrites the current Markdown as you ask. Slides you do not mention stay as they are.'
+                    : 'Writes a new presentation and replaces the current content.'}
+                  {' '}Undo reverts it. Layout settings are kept.
+                </Typography>
+                <TextField
+                  autoFocus
+                  fullWidth
+                  multiline
+                  minRows={4}
+                  maxRows={12}
+                  value={generateText}
+                  disabled={generating || apiBlocked}
+                  onChange={(e) => setGenerateText(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runGenerate(); } }}
+                  placeholder={generateMode === GENERATE_REVISE
+                    ? 'Example: add a slide on costs after the rollout schedule, and make the bullets shorter'
+                    : 'Example: about 10 internal slides explaining the goals, challenges, and rollout of generative AI'}
+                />
+                {apiBlocked && (
+                  <Box data-testid="api-mask" sx={{
+                    position: 'absolute', inset: 0, zIndex: 1, borderRadius: 1, p: 2,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    bgcolor: apiReady === false ? '#fff4e5' : 'rgba(255, 255, 255, 0.85)',
+                    border: apiReady === false ? '1px dashed #ed6c02' : 'none',
+                  }}>
+                    {apiReady === null ? (
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <CircularProgress size={18} />
+                        <Typography variant="body2" color="text.secondary">Checking the generation API…</Typography>
+                      </Box>
+                    ) : (
+                      <Box sx={{ maxWidth: '100%' }}>
+                        <Typography variant="subtitle2" sx={{ color: '#b45309', mb: 0.5 }}>
+                          ⚠ The generation API is not running, so Generate is unavailable.
+                        </Typography>
+                        <Typography variant="body2" sx={{ mb: 0.5 }}>Start it in the app folder:</Typography>
+                        <Box component="code" sx={{
+                          display: 'block', fontSize: 12, wordBreak: 'break-all', bgcolor: '#fff',
+                          border: '1px solid #f3c98b', borderRadius: 0.5, px: 1, py: 0.5,
+                        }}>
+                          {API_START_COMMAND}
+                        </Box>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
+                          <Typography variant="caption" color="text.secondary">This unlocks by itself once the API answers.</Typography>
+                          <Button size="small" onClick={checkApi}>Check now</Button>
+                        </Box>
+                      </Box>
+                    )}
+                  </Box>
+                )}
+              </Box>
+              {generateError && <Alert severity="error" sx={{ mt: 1, whiteSpace: 'pre-wrap' }}>{generateError}</Alert>}
+            </DialogContent>
+            <DialogActions>
+              {generating && <CircularProgress size={18} sx={{ mr: 1 }} />}
+              {generating && <Typography variant="body2" color="text.secondary" sx={{ mr: 'auto', ml: 1 }}>Generating… this can take a minute.</Typography>}
+              <Button onClick={closeGenerate}>Cancel</Button>
+              <Tooltip title="Ctrl+Enter">
+                <span>
+                  <Button variant="contained" disabled={generating || apiBlocked || !generateText.trim()} onClick={runGenerate}>
+                    {generateMode === GENERATE_REVISE ? 'Revise' : 'Generate'}
+                  </Button>
+                </span>
+              </Tooltip>
+            </DialogActions>
+          </Dialog>
+
+          <Snackbar
+            open={!!notice}
+            autoHideDuration={NOTICE_DURATION}
+            onClose={() => setNotice(null)}
+            anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+          >
+            {notice ? <Alert severity={notice.severity} variant="filled" onClose={() => setNotice(null)}>{notice.text}</Alert> : <span />}
+          </Snackbar>
+        </Box>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

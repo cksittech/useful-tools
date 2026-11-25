@@ -1,0 +1,3 @@
+# Python caches and local Claude settings are not published.
+__pycache__/
+.claude/

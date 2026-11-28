@@ -42,6 +42,10 @@ alternativa-ppt-libre/   Alternativa ppt Libre
 - [React](https://react.dev/) and [MUI](https://mui.com/), loaded from `lib/` via `<script>` tags
 - [Babel Standalone](https://babeljs.io/docs/babel-standalone) for in-browser JSX
 
+## License
+
+[MIT](./LICENSE). The libraries bundled in the `lib/` folders keep their own licenses; see [THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md).
+
 </details>
 <details><summary><img src="https://flagcdn.com/w20/es.png" alt="Español"> Español (traducción automática)</summary>
 
@@ -86,6 +90,10 @@ alternativa-ppt-libre/   Alternativa ppt Libre
 - [React](https://react.dev/) y [MUI](https://mui.com/), cargados desde `lib/` mediante etiquetas `<script>`
 - [Babel Standalone](https://babeljs.io/docs/babel-standalone) para JSX en el navegador
 
+## Licencia
+
+[MIT](./LICENSE). Las bibliotecas incluidas en las carpetas `lib/` mantienen sus propias licencias; consulte [THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md).
+
 </details>
 <details><summary><img src="https://flagcdn.com/w20/br.png" alt="Português"> Português (tradução automática)</summary>
 
@@ -129,5 +137,9 @@ alternativa-ppt-libre/   Alternativa ppt Libre
 
 - [React](https://react.dev/) e [MUI](https://mui.com/), carregados de `lib/` por meio de tags `<script>`
 - [Babel Standalone](https://babeljs.io/docs/babel-standalone) para JSX no navegador
+
+## Licença
+
+[MIT](./LICENSE). As bibliotecas incluídas nas pastas `lib/` mantêm suas próprias licenças; veja [THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md).
 
 </details>

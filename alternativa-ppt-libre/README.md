@@ -10,10 +10,10 @@ Editing, saving and opening run in the browser. Only Markdown generation (Codex)
 ## Requirements
 
 - Edge or Chrome
-- For Generate only: Python 3.10+, `fastapi`, `uvicorn` and `openai-codex`, with `codex login` done once
+- For Generate only: Python 3.10+ and the Python packages in `requirements.txt` (`fastapi`, `uvicorn`, `openai-codex` and their dependencies), with `codex login` done once
 
 ```
-pip install fastapi uvicorn openai-codex
+pip install -r requirements.txt
 ```
 
 ## Usage
@@ -71,6 +71,7 @@ common.js       Markdown <-> PPTX conversion, editing session, undo, browser sto
 api_server.py   API routes
 common.py       Markdown generation with Codex
 data.py         Server constants and prompts
+requirements.txt  Python dependencies (pinned)
 lib/            React, ReactDOM, MUI, Babel, JSZip (bundled, no CDN)
 tests/          Tests
 ```
@@ -95,10 +96,10 @@ La edición, el guardado y la apertura se ejecutan en el navegador. Solo la gene
 ## Requisitos
 
 - Edge o Chrome
-- Solo para Generate: Python 3.10+, `fastapi`, `uvicorn` y `openai-codex`, con `codex login` realizado una vez
+- Solo para Generate: Python 3.10+ y los paquetes de Python en `requirements.txt` (`fastapi`, `uvicorn`, `openai-codex` y sus dependencias), con `codex login` realizado una vez
 
 ```
-pip install fastapi uvicorn openai-codex
+pip install -r requirements.txt
 ```
 
 ## Uso
@@ -156,6 +157,7 @@ common.js       Conversión Markdown <-> PPTX, sesión de edición, deshacer, al
 api_server.py   Rutas de la API
 common.py       Generación de Markdown con Codex
 data.py         Constantes y prompts del servidor
+requirements.txt  Dependencias de Python (versiones fijadas)
 lib/            React, ReactDOM, MUI, Babel, JSZip (incluidos, sin CDN)
 tests/          Pruebas
 ```
@@ -180,10 +182,10 @@ Edição, salvamento e abertura rodam no navegador. Apenas a geração de Markdo
 ## Requisitos
 
 - Edge ou Chrome
-- Apenas para Generate: Python 3.10+, `fastapi`, `uvicorn` e `openai-codex`, com `codex login` feito uma vez
+- Apenas para Generate: Python 3.10+ e os pacotes Python em `requirements.txt` (`fastapi`, `uvicorn`, `openai-codex` e suas dependências), com `codex login` feito uma vez
 
 ```
-pip install fastapi uvicorn openai-codex
+pip install -r requirements.txt
 ```
 
 ## Uso
@@ -241,6 +243,7 @@ common.js       Conversão Markdown <-> PPTX, sessão de edição, desfazer, arm
 api_server.py   Rotas da API
 common.py       Geração de Markdown com o Codex
 data.py         Constantes e prompts do servidor
+requirements.txt  Dependências Python (versões fixadas)
 lib/            React, ReactDOM, MUI, Babel, JSZip (incluídos, sem CDN)
 tests/          Testes
 ```

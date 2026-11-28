@@ -12,10 +12,10 @@ A saved workflow can also be run as an API.
 
 - A modern browser
 - Python 3.10+
-- `fastapi`, `uvicorn`, `pydantic` and `openai-codex`, with `codex login` done once
+- Python packages in `requirements.txt` (`fastapi`, `uvicorn`, `pydantic`, `openai-codex` and their dependencies), with `codex login` done once
 
 ```
-pip install fastapi uvicorn pydantic openai-codex
+pip install -r requirements.txt
 ```
 
 ## Usage
@@ -72,6 +72,7 @@ common.js       UI helper functions
 api_server.py   API routes
 common.py       Server logic (Codex jobs, graph evaluation, node types, workflow runs)
 data.py         Server constants
+requirements.txt  Python dependencies (pinned)
 config.json     Settings read by both the server and the UI (port, poll interval, Codex model)
 node_plugin/    Plugin node types, one .py file per type
 node_ai/        Saved AI Nodes (JSON, one file each)
@@ -101,10 +102,10 @@ Un flujo de trabajo guardado también se puede ejecutar como API.
 
 - Un navegador moderno
 - Python 3.10+
-- `fastapi`, `uvicorn`, `pydantic` y `openai-codex`, con `codex login` realizado una vez
+- Paquetes de Python en `requirements.txt` (`fastapi`, `uvicorn`, `pydantic`, `openai-codex` y sus dependencias), con `codex login` realizado una vez
 
 ```
-pip install fastapi uvicorn pydantic openai-codex
+pip install -r requirements.txt
 ```
 
 ## Uso
@@ -161,6 +162,7 @@ common.js       Funciones auxiliares de la interfaz
 api_server.py   Rutas de la API
 common.py       Lógica del servidor (trabajos de Codex, evaluación del grafo, tipos de nodo, ejecuciones)
 data.py         Constantes del servidor
+requirements.txt  Dependencias de Python (versiones fijadas)
 config.json     Ajustes leídos por el servidor y la interfaz (puerto, intervalo de consulta, modelo de Codex)
 node_plugin/    Tipos de nodo de plugin, un archivo .py por tipo
 node_ai/        AI Nodes guardados (JSON, un archivo cada uno)
@@ -190,10 +192,10 @@ Um fluxo de trabalho salvo também pode ser executado como API.
 
 - Um navegador moderno
 - Python 3.10+
-- `fastapi`, `uvicorn`, `pydantic` e `openai-codex`, com `codex login` feito uma vez
+- Pacotes Python em `requirements.txt` (`fastapi`, `uvicorn`, `pydantic`, `openai-codex` e suas dependências), com `codex login` feito uma vez
 
 ```
-pip install fastapi uvicorn pydantic openai-codex
+pip install -r requirements.txt
 ```
 
 ## Uso
@@ -250,6 +252,7 @@ common.js       Funções auxiliares da interface
 api_server.py   Rotas da API
 common.py       Lógica do servidor (jobs do Codex, avaliação do grafo, tipos de nó, execuções)
 data.py         Constantes do servidor
+requirements.txt  Dependências Python (versões fixadas)
 config.json     Configurações lidas pelo servidor e pela interface (porta, intervalo de consulta, modelo do Codex)
 node_plugin/    Tipos de nó de plugin, um arquivo .py por tipo
 node_ai/        AI Nodes salvos (JSON, um arquivo cada)

@@ -27,12 +27,12 @@ Download the ones you need from https://www.cisecurity.org/cis-benchmarks and pu
 
 - A modern browser
 - Python 3.10+
-- `fastapi`, `uvicorn` and `openai-codex`, with `codex login` done once
+- Python packages in `requirements.txt` (`fastapi`, `uvicorn`, `openai-codex` and their dependencies), with `codex login` done once
 - `pdftotext` (poppler). Git for Windows ships it at
   `C:\Program Files\Git\mingw64\bin\pdftotext.exe`, which is used when it is not on PATH.
 
 ```
-pip install fastapi uvicorn openai-codex
+pip install -r requirements.txt
 ```
 
 ## Usage
@@ -75,6 +75,7 @@ common.js       UI helper functions
 api_server.py   API routes
 common.py       Server logic
 data.py         Server constants
+requirements.txt  Python dependencies (pinned)
 documents/      CIS Benchmark PDFs (input; not included, see above)
 generated.json  Saved data: generated Ansible tasks, keyed by "<pdf>::<number>"
 snapshot/       Saved data: parsed PDFs and results per PDF, for viewing without the API server
@@ -118,12 +119,12 @@ Descargue los que necesite desde https://www.cisecurity.org/cis-benchmarks y col
 
 - Un navegador moderno
 - Python 3.10+
-- `fastapi`, `uvicorn` y `openai-codex`, con `codex login` realizado una vez
+- Paquetes de Python en `requirements.txt` (`fastapi`, `uvicorn`, `openai-codex` y sus dependencias), con `codex login` realizado una vez
 - `pdftotext` (poppler). Git for Windows lo incluye en
   `C:\Program Files\Git\mingw64\bin\pdftotext.exe`, que se usa cuando no está en el PATH.
 
 ```
-pip install fastapi uvicorn openai-codex
+pip install -r requirements.txt
 ```
 
 ## Uso
@@ -166,6 +167,7 @@ common.js       Funciones auxiliares de la interfaz
 api_server.py   Rutas de la API
 common.py       Lógica del servidor
 data.py         Constantes del servidor
+requirements.txt  Dependencias de Python (versiones fijadas)
 documents/      PDFs de CIS Benchmark (entrada; no incluidos, ver arriba)
 generated.json  Datos guardados: tareas de Ansible generadas, con la clave "<pdf>::<number>"
 snapshot/       Datos guardados: PDFs analizados y resultados por PDF, para ver sin el servidor de la API
@@ -209,12 +211,12 @@ Baixe os que precisar em https://www.cisecurity.org/cis-benchmarks e coloque-os 
 
 - Um navegador moderno
 - Python 3.10+
-- `fastapi`, `uvicorn` e `openai-codex`, com `codex login` feito uma vez
+- Pacotes Python em `requirements.txt` (`fastapi`, `uvicorn`, `openai-codex` e suas dependências), com `codex login` feito uma vez
 - `pdftotext` (poppler). O Git for Windows o inclui em
   `C:\Program Files\Git\mingw64\bin\pdftotext.exe`, que é usado quando ele não está no PATH.
 
 ```
-pip install fastapi uvicorn openai-codex
+pip install -r requirements.txt
 ```
 
 ## Uso
@@ -257,6 +259,7 @@ common.js       Funções auxiliares da interface
 api_server.py   Rotas da API
 common.py       Lógica do servidor
 data.py         Constantes do servidor
+requirements.txt  Dependências Python (versões fixadas)
 documents/      PDFs do CIS Benchmark (entrada; não incluídos, veja acima)
 generated.json  Dados salvos: tarefas Ansible geradas, com a chave "<pdf>::<number>"
 snapshot/       Dados salvos: PDFs analisados e resultados por PDF, para ver sem o servidor da API

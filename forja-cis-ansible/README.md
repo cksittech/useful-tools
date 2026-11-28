@@ -21,7 +21,7 @@ with a Copy button: remediation (apply), verification (audit) and rollback (undo
 No PDFs are included: CIS does not allow hosting its Benchmarks outside CIS in any format.
 Download the ones you need from https://www.cisecurity.org/cis-benchmarks and put them in
 `documents/`. They are licensed under CC BY-NC-SA 4.0 (non-commercial use only).
-`snapshot/` and `generated.json` are built from them, so they start empty as well.
+`snapshot/` and `generated.json` are built from them, so they are not included either: `generated.json` is created on the first generation.
 
 ## Requirements
 
@@ -112,7 +112,7 @@ con un botón Copy: remediation (aplicar), verification (auditar) y rollback (de
 No se incluye ningún PDF: CIS no permite alojar sus Benchmarks fuera de CIS en ningún formato.
 Descargue los que necesite desde https://www.cisecurity.org/cis-benchmarks y colóquelos en
 `documents/`. Están bajo la licencia CC BY-NC-SA 4.0 (solo uso no comercial).
-`snapshot/` y `generated.json` se generan a partir de ellos, por lo que también empiezan vacíos.
+`snapshot/` y `generated.json` se generan a partir de ellos, por lo que tampoco se incluyen: `generated.json` se crea con la primera generación.
 
 ## Requisitos
 
@@ -203,7 +203,7 @@ com um botão Copy: remediation (aplicar), verification (auditar) e rollback (de
 Nenhum PDF está incluído: o CIS não permite hospedar seus Benchmarks fora do CIS em nenhum formato.
 Baixe os que precisar em https://www.cisecurity.org/cis-benchmarks e coloque-os em
 `documents/`. Eles são licenciados sob CC BY-NC-SA 4.0 (somente uso não comercial).
-`snapshot/` e `generated.json` são gerados a partir deles, então também começam vazios.
+`snapshot/` e `generated.json` são gerados a partir deles, então também não são incluídos: `generated.json` é criado na primeira geração.
 
 ## Requisitos
 

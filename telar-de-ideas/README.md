@@ -1,42 +1,41 @@
 # Telar de Ideas
 
-Folder: telar-de-ideas (also the name GET /who returns).
+A no-build node/workflow editor built with React, MUI and React Flow, backed by a FastAPI server.
+There is no bundler and no `npm install`: open `index.html` directly in the browser.
 
-A no-build node/workflow editor: open index.html directly in the browser.
 Place nodes on the canvas, wire them, and run them. An AI Node sends its filled
 prompt to Codex and passes the structured output on to the next nodes.
-Built on the UtilToolApp template (..\..\template).
+A saved workflow can also be run as an API.
 
-## Files
+## Requirements
 
-    index.html      UI in JSX, compiled in the browser by babel (React components and state live only here)
-    data.js         UI constants (CODEX_API_BASE, colors, layout). No functions
-    common.js       UI functions (placeholder parsing, api calls, RunClient). No React, DOM, or state
-    api_server.py   API entry point (route definitions and request checks only)
-    common.py       Server logic (Codex jobs, graph evaluation, node types, workflow runs)
-    data.py         Server constants, placeholder patterns and request models. No functions
-    config.json     Settings read by both the server and the UI (port, poll interval, Codex model)
-    node_plugin/    Plugin node types, one .py file per type (see node_plugin/README.md)
-    node_ai/        Saved AI Nodes (JSON, one file each)
-    workflows/      Saved workflows (JSON, one file each)
-    lib/            External libraries (react / react-dom / material-ui / reactflow / icons / babel)
-    tests/          python -m unittest discover -s tests / node --test tests/*.test.js
-    README.md       This file
+- A modern browser
+- Python 3.10+
+- `fastapi`, `uvicorn`, `pydantic` and `openai-codex`, with `codex login` done once
 
-## Start
+```
+pip install fastapi uvicorn pydantic openai-codex
+```
 
-    pip install fastapi uvicorn pydantic openai-codex
-    $env:PYTHONDONTWRITEBYTECODE = "1"; uvicorn api_server:app --reload --host 127.0.0.1 --port 9014
+## Usage
 
-Then open index.html directly in the browser.
-If you change the port, keep --port, config.json's api_port and data.js's CODEX_API_BASE the same.
+1. Start the API server in this folder:
 
-## Codex model
+   ```
+   $env:PYTHONDONTWRITEBYTECODE = "1"; uvicorn api_server:app --reload --host 127.0.0.1 --port 9014
+   ```
 
-config.json's codex_model / codex_reasoning_effort apply to every AI Node job.
-Set them to null to fall back to ~/.codex/config.toml.
+2. Open `index.html` in the browser.
+3. Add nodes from the menu, wire them, and run the workflow.
 
-## Generate Workflow
+If you change the port, keep `--port`, `api_port` in `config.json` and `CODEX_API_BASE` in `data.js` the same.
+
+### Codex model
+
+`codex_model` / `codex_reasoning_effort` in `config.json` apply to every AI Node job.
+Set them to `null` to fall back to `~/.codex/config.toml`.
+
+### Generate Workflow
 
 Menu > Workflow > "+ Generate Workflow": describe what the workflow should do, and Codex builds it
 from the Plugin Nodes, Group, Wrapper and saved AI Nodes (Structured Output; API Input/Response are not used).
@@ -44,42 +43,45 @@ The server checks the answer with the pre-run check and sends problems back to C
 The result opens on the canvas, not saved and not run; save it with "+ Save Workflow".
 Codex runs with a read-only sandbox here, so generating never changes files.
 
+### Adding node types
+
+Each `.py` file in `node_plugin/` is one node type. See [node_plugin/README.md](node_plugin/README.md).
+
 ## API
 
-| Path | Returns | Notes |
+| Method | Path | Response |
 |---|---|---|
-| GET /health | {"status": "ok"} | Common. Every app has it |
-| GET /who | {"name", "path"} | Common. Shows which app is using the port |
-| /nodes, /workflows | saved AI Nodes / workflows | GET list, GET one, POST, PUT, DELETE |
-| GET /node-types, POST /evaluate | node type list / canvas live view | What the editor draws |
-| /codex/jobs | Codex jobs | POST start, GET poll, POST .../stop |
-| POST /workflows/generate | {"job_id"} | Generate Workflow. Poll GET /codex/jobs/{id}; output = {workflow, summary, issues, attempts} |
-| /runs, /workflows/{id}/runs | server-side workflow runs | POST start, GET poll, POST .../stop |
-| GET /api/{name} | the run (its API Response body) | Runs a saved workflow by name; every fetch starts a run. Query = API Input params |
-| GET /api/{name}/spec | the workflow's parameters and fields | Same as GET /workflows/{id}/api |
+| GET | `/health` | `{"status": "ok"}` |
+| GET | `/who` | `{"name": "telar-de-ideas", "path": "<server folder>"}` |
+| GET, POST, PUT, DELETE | `/nodes`, `/workflows` | Saved AI Nodes / workflows (list, one, create, update, delete) |
+| GET | `/node-types` | Node type list |
+| POST | `/evaluate` | Canvas live view |
+| POST, GET | `/codex/jobs` | Codex jobs (start, poll, `.../stop`) |
+| POST | `/workflows/generate` | `{"job_id"}`. Poll `GET /codex/jobs/{id}`; output = `{workflow, summary, issues, attempts}` |
+| POST, GET | `/runs`, `/workflows/{id}/runs` | Server-side workflow runs (start, poll, `.../stop`) |
+| GET | `/api/{name}` | Runs a saved workflow by name and returns its API Response body. Query = API Input params; every fetch starts a run |
+| GET | `/api/{name}/spec` | The workflow's parameters and fields (same as `GET /workflows/{id}/api`) |
 
-## Three-file split
+## Project structure
 
-| Role | Server | UI |
-|---|---|---|
-| Entry point / UI | api_server.py | index.html |
-| Logic / functions | common.py | common.js |
-| Constants / types | data.py | data.js |
+```
+index.html      UI
+data.js         UI constants
+common.js       UI helper functions
+api_server.py   API routes
+common.py       Server logic (Codex jobs, graph evaluation, node types, workflow runs)
+data.py         Server constants
+config.json     Settings read by both the server and the UI (port, poll interval, Codex model)
+node_plugin/    Plugin node types, one .py file per type
+node_ai/        Saved AI Nodes (JSON, one file each)
+workflows/      Saved workflows (JSON, one file each)
+lib/            React, ReactDOM, MUI, React Flow, Babel and others (bundled, no CDN)
+tests/          Tests
+```
 
-- Do not add new .py / .js files; put code in one of these three. A long common file is fine
-  (split it with `# --- Section ---` headings).
-- The one exception is node_plugin/, so that a node type can be added by dropping in a file.
-- Besides these, only lib/, tests/, saved data (node_ai/, workflows/) and config.json belong in the folder.
+## Tech stack
 
-## Dependency direction
-
-    api_server.py -> common.py -> data.py
-    index.html    -> common.js -> data.js
-    node_plugin/*.py -> common.py, data.py
-
-Never reference in the reverse direction.
-- data.py / data.js: no functions, no references to other project files.
-- common.py: do not import fastapi or api_server. Raise plain exceptions (ValueError, etc.);
-  api_server converts them to HTTP status codes.
-- common.js: do not touch React, the DOM, or state.
-- When the server and UI share a value, write it in both places with a "keep in sync with ..." comment.
+- [React](https://react.dev/), [MUI](https://mui.com/) and [React Flow](https://reactflow.dev/), loaded from `lib/` via `<script>` tags
+- [Babel Standalone](https://babeljs.io/docs/babel-standalone) for in-browser JSX
+- [FastAPI](https://fastapi.tiangolo.com/) and [Uvicorn](https://www.uvicorn.org/)
+- [Codex](https://github.com/openai/codex) via the `openai-codex` SDK

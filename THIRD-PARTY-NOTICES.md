@@ -7,14 +7,15 @@ They are not covered by this repository's `LICENSE`; each stays under its own li
 
 | Component | Version | License | Copyright | Source | Files |
 |---|---|---|---|---|---|
-| React | 18.3.1 | MIT | Copyright (c) Meta Platforms, Inc. and affiliates. | https://github.com/facebook/react | `lib/react.min.js` in every folder |
-| ReactDOM | 18.3.1 | MIT | Copyright (c) Meta Platforms, Inc. and affiliates. | https://github.com/facebook/react | `lib/react-dom.min.js` in every folder |
-| MUI (Material UI) | 5.18.0 | MIT | Copyright (c) 2014 Call-Em-All | https://github.com/mui/material-ui | `lib/material-ui.min.js` in every folder |
-| Babel Standalone | 7.29.7 / 7.26.4 | MIT | Copyright (c) 2014-present Sebastian McKenzie and other contributors | https://github.com/babel/babel | `lib/babel.min.js` (top page: 7.29.7, tools: 7.26.4) |
+| React | 18.3.1 | MIT | Copyright (c) Meta Platforms, Inc. and affiliates. | https://github.com/facebook/react | `lib/react.min.js` in each tool folder |
+| ReactDOM | 18.3.1 | MIT | Copyright (c) Meta Platforms, Inc. and affiliates. | https://github.com/facebook/react | `lib/react-dom.min.js` in each tool folder |
+| MUI (Material UI) | 5.18.0 | MIT | Copyright (c) 2014 Call-Em-All | https://github.com/mui/material-ui | `lib/material-ui.min.js` in each tool folder |
+| Babel Standalone | 7.26.4 | MIT | Copyright (c) 2014-present Sebastian McKenzie and other contributors | https://github.com/babel/babel | `lib/babel.min.js` in each tool folder |
 | JSZip | 3.10.1 | MIT (dual-licensed MIT or GPLv3; used under MIT) | Copyright (c) 2009-2016 Stuart Knightley, David Duponchel, Franz Buchinger, António Afonso | https://github.com/Stuk/jszip | `alternativa-ppt-libre/lib/jszip.min.js` |
 | React Flow (@xyflow/react) | 12.x | MIT | Copyright (c) 2019-2024 webkid GmbH | https://github.com/xyflow/xyflow | `telar-de-ideas/lib/reactflow.umd.js`, `telar-de-ideas/lib/reactflow.css` |
 | Ajv | 8.17.1 | MIT | Copyright (c) 2015-2021 Evgeny Poberezkin | https://github.com/ajv-validator/ajv | `telar-de-ideas/lib/ajv7.min.js` |
 | Material Icons (SVG paths, via MUI Icons) | - | Apache-2.0 (icons) / MIT (MUI Icons) | Copyright Google LLC; Copyright (c) 2014 Call-Em-All | https://github.com/google/material-design-icons, https://github.com/mui/material-ui | `telar-de-ideas/lib/icons-data.js` |
+| GSAP | 3.15.1 | GSAP Standard "No Charge" License (not open source; see below) | Copyright 2026, GreenSock. All rights reserved. | https://gsap.com | `lib/gsap.min.js` (top page) |
 
 ## MIT License
 
@@ -252,3 +253,15 @@ Applies to Material Icons.
    See the License for the specific language governing permissions and
    limitations under the License.
 ```
+
+## GSAP Standard License
+
+GSAP is free to use, including commercial use, under the GSAP Standard "No Charge" License:
+https://gsap.com/standard-license
+
+The license is not an open-source license. Its terms include:
+
+- GSAP may not be used in tools that let users build visual animations without code
+  in a way that competes with Webflow's visual animation building capabilities.
+- Proprietary notices and branding in GSAP files must not be removed or altered.
+  `lib/gsap.min.js` keeps its original header comment.

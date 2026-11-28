@@ -1,130 +1,122 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Useful Tools</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { width: 100%; height: 100%; }
-    #root { width: 100%; height: 100%; }
+    html, body { height: 100%; overflow: hidden; background: #07080a; color: #c9d1d9; font-family: Consolas, "Cascadia Mono", monospace; }
+    body { display: flex; justify-content: center; padding: 3vh 3vw; }
+    .win { width: min(1180px, 100%); height: 100%; display: flex; flex-direction: column; border: 1px solid #30363d; border-radius: 10px; background: #0d1117; overflow: hidden; box-shadow: 0 30px 80px rgba(0,0,0,0.6); }
+    .bar { display: flex; gap: 8px; padding: 12px 14px; border-bottom: 1px solid #21262d; align-items: center; }
+    .bar i { width: 12px; height: 12px; border-radius: 50%; }
+    .bar span { margin-left: 10px; font-size: 12px; color: #8b949e; }
+    .body { flex: 1; min-height: 0; display: grid; grid-template-columns: 280px minmax(0, 1fr); }
+    .side { border-right: 1px solid #21262d; padding: 18px 0; font-size: 13px; overflow: auto; }
+    .side .h { padding: 0 18px 10px; color: #8b949e; }
+    .side button { display: block; width: 100%; text-align: left; background: none; border: 0; color: #c9d1d9; font: 13px Consolas, monospace; padding: 7px 18px; cursor: pointer; position: relative; }
+    .side button.on { background: rgba(31,111,235,0.2); color: #fff; }
+    .side button.on::before { content: '>'; position: absolute; left: 6px; color: #58a6ff; }
+    .side button:hover { color: #fff; }
+    .main { display: flex; flex-direction: column; min-height: 0; padding: 22px 26px; font-size: 14px; line-height: 1.75; }
+    .prompt { color: #3fb950; }
+    .out { flex: 1; min-height: 0; margin-top: 10px; display: flex; flex-direction: column; gap: 16px; }
+    .out h2 { font-size: 22px; color: #fff; font-weight: 600; }
+    .out .k { color: #d2a8ff; }
+    .out p { margin-top: 8px; color: #8b949e; }
+    .out a { display: inline-block; margin-top: 14px; color: #58a6ff; }
+    .shotwrap { flex: 1; min-height: 0; container-type: size; }
+    .frame { position: relative; width: min(100cqw, 160cqh); aspect-ratio: 16 / 10; border: 1px solid #30363d; border-radius: 4px; overflow: hidden; }
+    .frame img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .timer { margin-top: 14px; color: #6e7681; white-space: pre; }
+    .cursor { display: inline-block; width: 8px; height: 1.1em; background: #c9d1d9; vertical-align: text-bottom; }
+    @media (max-width: 860px) {
+      .body { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+      .side { max-height: 28vh; border-right: 0; border-bottom: 1px solid #21262d; }
+    }
   </style>
-  <script src="lib/react.min.js"></script>
-  <script src="lib/react-dom.min.js"></script>
-  <script src="lib/material-ui.min.js"></script>
-  <script src="lib/babel.min.js"></script>
+  <script src="lib/gsap.min.js"></script>
 </head>
 <body>
 
-<div id="root"></div>
+<div class="win">
+  <div class="bar"><i style="background:#ff5f56"></i><i style="background:#ffbd2e"></i><i style="background:#27c93f"></i><span>useful-tools &mdash; bash</span></div>
+  <div class="body">
+    <div class="side" id="side"><div class="h">TOOLS/</div></div>
+    <div class="main">
+      <div><span class="prompt">~/useful-tools $</span> <span id="cmd"></span><span class="cursor" id="cur"></span></div>
+      <div class="out" id="out">
+        <div><div class="k" id="kind"></div><h2 id="name"></h2><p id="desc"></p><a id="open">./open &rarr;</a></div>
+        <div class="shotwrap"><div class="frame"><img id="shot" alt=""></div></div>
+      </div>
+      <div class="timer" id="timer"></div>
+    </div>
+  </div>
+</div>
 
-<script type="text/babel" data-presets="react">
-const {
-  ThemeProvider, createTheme, CssBaseline,
-  Box, Container, Typography, Grid, Card, CardActionArea, CardMedia, CardContent,
-} = MaterialUI;
+<script>
+const tools = [
+  // { name: 'Tool Name', slug: 'tool-name', tag: 'Short kind', desc: 'What the tool does' },
+  { name: 'Telar de Ideas', slug: 'telar-de-ideas', tag: 'Workflow editor', desc: 'A workflow editor: wire nodes to calculate, format, branch, move folders and call Codex' },
+  { name: 'Forja CIS-Ansible', slug: 'forja-cis-ansible', tag: 'CIS to Ansible', desc: 'Browse CIS Benchmark recommendations from the PDF and generate apply, verify and rollback Ansible tasks with Codex' },
+  { name: 'Alternativa ppt Libre', slug: 'alternativa-ppt-libre', tag: 'Markdown to PPTX', desc: 'A slide editor: edit Markdown and slides side by side, and save and open them as PPTX' },
+];
+const HOLD = 7;
+const BAR = 30;
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const $ = (id) => document.getElementById(id);
 
-const theme = createTheme({
-  palette: {
-    mode: 'dark',
-    background: { default: '#12141a', paper: '#1a1d24' },
-    primary: { main: '#4299e1' },
+const side = $('side');
+side.insertAdjacentHTML('beforeend', tools.map((t) => `<button>${t.slug}/</button>`).join(''));
+const btns = [...side.querySelectorAll('button')];
+if (!reduce) gsap.to('#cur', { opacity: 0, repeat: -1, yoyo: true, duration: 0.5, ease: 'steps(1)' });
+
+let cur = -1;
+let typing;
+const progress = { v: 0 };
+const timer = gsap.fromTo(progress, { v: 0 }, {
+  v: 1, duration: HOLD, ease: 'none', paused: true,
+  onUpdate: () => {
+    const k = Math.round(progress.v * BAR);
+    $('timer').textContent = `next in ${(HOLD - progress.v * HOLD).toFixed(1)}s  [${'#'.repeat(k)}${'.'.repeat(BAR - k)}]`;
   },
-  typography: { fontFamily: 'sans-serif' },
+  onComplete: () => show((cur + 1) % tools.length),
 });
 
-const apps = [
-  // {
-  //   title: 'Tool Name',
-  //   description: 'What the tool does',
-  //   image: 'images/tool-name.png',
-  //   href: 'tool-name/index.html',
-  // },
-  {
-    title: 'Telar de Ideas',
-    description: 'A workflow editor: wire nodes to calculate, format, branch, move folders and call Codex',
-    image: 'images/telar-de-ideas.png',
-    href: 'telar-de-ideas/index.html',
-  },
-  {
-    title: 'Forja CIS-Ansible',
-    description: 'Browse CIS Benchmark recommendations from the PDF and generate apply, verify and rollback Ansible tasks with Codex',
-    image: 'images/forja-cis-ansible.png',
-    href: 'forja-cis-ansible/index.html',
-  },
-  {
-    title: 'Alternativa ppt Libre',
-    description: 'A slide editor: edit Markdown and slides side by side, and save and open them as PPTX',
-    image: 'images/alternativa-ppt-libre.png',
-    href: 'alternativa-ppt-libre/index.html',
-  },
-];
-
-function AppCard({ app }) {
-  return (
-    <Card sx={{
-      height: '100%',
-      display: 'flex',
-      flexDirection: 'column',
-      bgcolor: 'background.paper',
-      transition: 'transform 0.15s ease, box-shadow 0.15s ease',
-      '&:hover': {
-        transform: 'translateY(-4px)',
-        boxShadow: 6,
-      },
-    }}>
-      <CardActionArea
-        component="a"
-        href={app.href}
-        sx={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'stretch' }}
-      >
-        <CardMedia
-          component="img"
-          image={app.image}
-          alt={app.title}
-          sx={{ height: 220, objectFit: 'cover', bgcolor: '#000' }}
-        />
-        <CardContent sx={{ flexGrow: 1 }}>
-          <Typography variant="h6" component="div" gutterBottom>
-            {app.title}
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            {app.description}
-          </Typography>
-        </CardContent>
-      </CardActionArea>
-    </Card>
-  );
+function fill(t) {
+  $('kind').textContent = `# ${t.tag}`;
+  $('name').textContent = t.name;
+  $('desc').textContent = t.desc;
+  $('open').href = `${t.slug}/index.html`;
+  $('shot').src = `images/${t.slug}.png`;
 }
 
-function App() {
-  return (
-    <Box sx={{ minHeight: '100vh', py: 6 }}>
-      <Container maxWidth="md">
-        <Typography variant="h4" component="h1" align="center" gutterBottom>
-          Useful Tools
-        </Typography>
-        <Typography variant="body1" color="text.secondary" align="center" sx={{ mb: 5 }}>
-          Choose a tool
-        </Typography>
-        <Grid container spacing={4}>
-          {apps.map((app) => (
-            <Grid item xs={12} sm={6} key={app.title}>
-              <AppCard app={app} />
-            </Grid>
-          ))}
-        </Grid>
-      </Container>
-    </Box>
-  );
+function show(i) {
+  cur = i;
+  const t = tools[i];
+  btns.forEach((b, j) => b.classList.toggle('on', j === i));
+  const text = `cat ${t.slug}/README.md`;
+  if (typing) typing.kill();
+  if (reduce) {
+    $('cmd').textContent = text;
+    fill(t);
+    gsap.set('#out', { opacity: 1 });
+  } else {
+    const o = { n: 0 };
+    gsap.set('#out', { opacity: 0 });
+    typing = gsap.timeline()
+      .to(o, { n: text.length, duration: Math.min(1.2, text.length * 0.035), ease: 'none', onUpdate: () => { $('cmd').textContent = text.slice(0, Math.round(o.n)); } })
+      .add(() => fill(t))
+      .to('#out', { opacity: 1, duration: 0.01 })
+      .fromTo('#out .k, #out h2, #out p, #out a', { opacity: 0, x: -8 }, { opacity: 1, x: 0, duration: 0.25, stagger: 0.08, immediateRender: false })
+      .fromTo('.frame', { filter: 'brightness(3) saturate(0)' }, { filter: 'brightness(1) saturate(1)', duration: 0.5 }, '<');
+  }
+  timer.restart();
 }
 
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(
-  <ThemeProvider theme={theme}>
-    <CssBaseline />
-    <App />
-  </ThemeProvider>
-);
+btns.forEach((b, i) => b.addEventListener('click', () => show(i)));
+show(0);
 </script>
 
 </body>

@@ -4,7 +4,7 @@
 A collection of small no-build web apps built with React and MUI.
 There is no bundler and no `npm install`: open `index.html` directly in the browser.
 
-The top page lists the tools as cards. Click a card to open that tool.
+The top page shows one tool at a time, with its name, description and screenshot, and moves to the next one every 7 seconds. Pick a tool from the list on the left to show it right away.
 
 ## Tools
 
@@ -24,14 +24,15 @@ Each tool's README describes its requirements and usage. Some tools need a local
 ## Usage
 
 1. Open `index.html` in the browser.
-2. Click a tool's card.
+2. Pick a tool from the list on the left.
+3. Click `./open` to open that tool.
 
 ## Project structure
 
 ```
-index.html               Top page (tool cards)
-images/                  Card images, one per tool
-lib/                     React, ReactDOM, MUI, Babel for the top page (bundled, no CDN)
+index.html               Top page
+images/                  Screenshots, one per tool
+lib/                     GSAP for the top page (bundled, no CDN)
 telar-de-ideas/          Telar de Ideas
 forja-cis-ansible/       Forja CIS-Ansible
 alternativa-ppt-libre/   Alternativa ppt Libre
@@ -41,6 +42,7 @@ alternativa-ppt-libre/   Alternativa ppt Libre
 
 - [React](https://react.dev/) and [MUI](https://mui.com/), loaded from `lib/` via `<script>` tags
 - [Babel Standalone](https://babeljs.io/docs/babel-standalone) for in-browser JSX
+- [GSAP](https://gsap.com/) for the top page animation
 
 ## License
 
@@ -52,7 +54,7 @@ alternativa-ppt-libre/   Alternativa ppt Libre
 Una colección de pequeñas aplicaciones web sin compilación, construidas con React y MUI.
 No hay empaquetador ni `npm install`: abra `index.html` directamente en el navegador.
 
-La página principal muestra las herramientas como tarjetas. Haga clic en una tarjeta para abrir esa herramienta.
+La página principal muestra una herramienta a la vez, con su nombre, su descripción y una captura de pantalla, y pasa a la siguiente cada 7 segundos. Elija una herramienta en la lista de la izquierda para mostrarla de inmediato.
 
 ## Herramientas
 
@@ -72,14 +74,15 @@ El README de cada herramienta describe sus requisitos y su uso. Algunas herramie
 ## Uso
 
 1. Abra `index.html` en el navegador.
-2. Haga clic en la tarjeta de una herramienta.
+2. Elija una herramienta en la lista de la izquierda.
+3. Haga clic en `./open` para abrir esa herramienta.
 
 ## Estructura del proyecto
 
 ```
-index.html               Página principal (tarjetas de herramientas)
-images/                  Imágenes de las tarjetas, una por herramienta
-lib/                     React, ReactDOM, MUI, Babel para la página principal (incluidos, sin CDN)
+index.html               Página principal
+images/                  Capturas de pantalla, una por herramienta
+lib/                     GSAP para la página principal (incluido, sin CDN)
 telar-de-ideas/          Telar de Ideas
 forja-cis-ansible/       Forja CIS-Ansible
 alternativa-ppt-libre/   Alternativa ppt Libre
@@ -89,6 +92,7 @@ alternativa-ppt-libre/   Alternativa ppt Libre
 
 - [React](https://react.dev/) y [MUI](https://mui.com/), cargados desde `lib/` mediante etiquetas `<script>`
 - [Babel Standalone](https://babeljs.io/docs/babel-standalone) para JSX en el navegador
+- [GSAP](https://gsap.com/) para la animación de la página principal
 
 ## Licencia
 
@@ -100,7 +104,7 @@ alternativa-ppt-libre/   Alternativa ppt Libre
 Uma coleção de pequenos aplicativos web sem build, feitos com React e MUI.
 Não há bundler nem `npm install`: abra `index.html` diretamente no navegador.
 
-A página inicial mostra as ferramentas como cartões. Clique em um cartão para abrir a ferramenta.
+A página inicial mostra uma ferramenta por vez, com o nome, a descrição e uma captura de tela, e passa para a próxima a cada 7 segundos. Escolha uma ferramenta na lista à esquerda para mostrá-la na hora.
 
 ## Ferramentas
 
@@ -120,14 +124,15 @@ O README de cada ferramenta descreve os requisitos e o uso. Algumas ferramentas 
 ## Uso
 
 1. Abra `index.html` no navegador.
-2. Clique no cartão de uma ferramenta.
+2. Escolha uma ferramenta na lista à esquerda.
+3. Clique em `./open` para abrir a ferramenta.
 
 ## Estrutura do projeto
 
 ```
-index.html               Página inicial (cartões das ferramentas)
-images/                  Imagens dos cartões, uma por ferramenta
-lib/                     React, ReactDOM, MUI, Babel para a página inicial (incluídos, sem CDN)
+index.html               Página inicial
+images/                  Capturas de tela, uma por ferramenta
+lib/                     GSAP para a página inicial (incluído, sem CDN)
 telar-de-ideas/          Telar de Ideas
 forja-cis-ansible/       Forja CIS-Ansible
 alternativa-ppt-libre/   Alternativa ppt Libre
@@ -137,6 +142,7 @@ alternativa-ppt-libre/   Alternativa ppt Libre
 
 - [React](https://react.dev/) e [MUI](https://mui.com/), carregados de `lib/` por meio de tags `<script>`
 - [Babel Standalone](https://babeljs.io/docs/babel-standalone) para JSX no navegador
+- [GSAP](https://gsap.com/) para a animação da página inicial
 
 ## Licença
 

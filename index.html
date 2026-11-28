@@ -64,13 +64,12 @@ const tools = [
 ];
 const HOLD = 7;
 const BAR = 30;
-const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const $ = (id) => document.getElementById(id);
 
 const side = $('side');
 side.insertAdjacentHTML('beforeend', tools.map((t) => `<button>${t.slug}/</button>`).join(''));
 const btns = [...side.querySelectorAll('button')];
-if (!reduce) gsap.to('#cur', { opacity: 0, repeat: -1, yoyo: true, duration: 0.5, ease: 'steps(1)' });
+gsap.to('#cur', { opacity: 0, repeat: -1, yoyo: true, duration: 0.5, ease: 'steps(1)' });
 
 let cur = -1;
 let typing;
@@ -98,20 +97,14 @@ function show(i) {
   btns.forEach((b, j) => b.classList.toggle('on', j === i));
   const text = `cat ${t.slug}/README.md`;
   if (typing) typing.kill();
-  if (reduce) {
-    $('cmd').textContent = text;
-    fill(t);
-    gsap.set('#out', { opacity: 1 });
-  } else {
-    const o = { n: 0 };
-    gsap.set('#out', { opacity: 0 });
-    typing = gsap.timeline()
-      .to(o, { n: text.length, duration: Math.min(1.2, text.length * 0.035), ease: 'none', onUpdate: () => { $('cmd').textContent = text.slice(0, Math.round(o.n)); } })
-      .add(() => fill(t))
-      .to('#out', { opacity: 1, duration: 0.01 })
-      .fromTo('#out .k, #out h2, #out p, #out a', { opacity: 0, x: -8 }, { opacity: 1, x: 0, duration: 0.25, stagger: 0.08, immediateRender: false })
-      .fromTo('.frame', { filter: 'brightness(3) saturate(0)' }, { filter: 'brightness(1) saturate(1)', duration: 0.5 }, '<');
-  }
+  const o = { n: 0 };
+  gsap.set('#out', { opacity: 0 });
+  typing = gsap.timeline()
+    .to(o, { n: text.length, duration: Math.min(1.2, text.length * 0.035), ease: 'none', onUpdate: () => { $('cmd').textContent = text.slice(0, Math.round(o.n)); } })
+    .add(() => fill(t))
+    .to('#out', { opacity: 1, duration: 0.01 })
+    .fromTo('#out .k, #out h2, #out p, #out a', { opacity: 0, x: -8 }, { opacity: 1, x: 0, duration: 0.25, stagger: 0.08, immediateRender: false })
+    .fromTo('.frame', { filter: 'brightness(3) saturate(0)' }, { filter: 'brightness(1) saturate(1)', duration: 0.5 }, '<');
   timer.restart();
 }
 

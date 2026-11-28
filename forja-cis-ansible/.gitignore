@@ -3,3 +3,4 @@ documents/*.pdf
 snapshot/*.js
 __pycache__/
 .claude/
+READONLYHERE.md

@@ -35,25 +35,25 @@ const theme = createTheme({
 const apps = [
   // {
   //   title: 'Tool Name',
-  //   description: 'ツールの説明',
+  //   description: 'What the tool does',
   //   image: 'images/tool-name.png',
   //   href: 'tool-name/index.html',
   // },
   {
     title: 'Telar de Ideas',
-    description: 'ノードを配線して計算・整形・条件分岐・フォルダ移動・Codex 呼び出しを実行するワークフローエディタ',
+    description: 'A workflow editor: wire nodes to calculate, format, branch, move folders and call Codex',
     image: 'images/telar-de-ideas.png',
     href: 'telar-de-ideas/index.html',
   },
   {
     title: 'Forja CIS-Ansible',
-    description: 'CIS Benchmark の推奨項目を PDF から閲覧し、Codex で適用・検証・ロールバックの Ansible タスクを生成するツール',
+    description: 'Browse CIS Benchmark recommendations from the PDF and generate apply, verify and rollback Ansible tasks with Codex',
     image: 'images/forja-cis-ansible.png',
     href: 'forja-cis-ansible/index.html',
   },
   {
     title: 'Alternativa ppt Libre',
-    description: 'Markdown とスライドを並べて編集し、PPTX で保存・読み込みできるスライドエディタ',
+    description: 'A slide editor: edit Markdown and slides side by side, and save and open them as PPTX',
     image: 'images/alternativa-ppt-libre.png',
     href: 'alternativa-ppt-libre/index.html',
   },
@@ -104,7 +104,7 @@ function App() {
           Useful Tools
         </Typography>
         <Typography variant="body1" color="text.secondary" align="center" sx={{ mb: 5 }}>
-          使用するツールを選択してください
+          Choose a tool
         </Typography>
         <Grid container spacing={4}>
           {apps.map((app) => (

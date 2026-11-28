@@ -16,6 +16,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -123,8 +124,8 @@ def list_records(folder: Path) -> list[tuple[str, dict]]:
     for path in sorted(folder.glob("*.json"), reverse=True):
         try:
             records.append((path.stem, json.loads(path.read_text(encoding="utf-8"))))
-        except Exception:
-            continue
+        except Exception as e:
+            logger.warning("Skipping unreadable record %s: %s", path.name, e)
     return records
 
 
@@ -235,7 +236,7 @@ def start_codex_job(prompt: str, output_schema: dict | None, node_id: str | None
         threading.Thread(target=run_codex_job, args=(job_id, prompt, output_schema), daemon=True).start()
         return {"job_id": job_id}
 
-    return run_once(operation_id, start)
+    return run_once(operation_id, start, scope="codex")
 
 
 # Serializes Codex() construction across threads — see CODEX_STARTUP_MAX_ATTEMPTS.
@@ -349,16 +350,18 @@ def _prune_operations_locked() -> None:
         _operations.popitem(last=False)
 
 
-def run_once(operation_id: str | None, fn):
+# scope keeps one endpoint's key from replaying another's result (e.g. a move's error on a Codex job).
+def run_once(operation_id: str | None, fn, scope: str = ""):
     if not operation_id:
         return fn()
+    key = (scope, operation_id)
     with _operations_lock:
         _prune_operations_locked()
-        entry = _operations.get(operation_id)
+        entry = _operations.get(key)
         is_owner = entry is None
         if is_owner:
             entry = {"event": threading.Event(), "result": None, "error": None, "at": time.time()}
-            _operations[operation_id] = entry
+            _operations[key] = entry
     if not is_owner:
         logger.info("Duplicate operation %s — replaying the first result.", operation_id)
         entry["event"].wait()
@@ -2020,8 +2023,8 @@ def editor_view(nodes, edges, running=False, run_state=None):
         for e in [*edges, *expand_group_edges(nodes, edges)]:
             connected.add(f"{e['from']['node']}:{e['from']['port']}:out")
             connected.add(f"{e['to']['node']}:{e['to']['port']}:in")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("editor_view could not list connected ports: %s", e)
     return to_jsonable({"nodes": view, "issues": issues, "connected": sorted(connected)})
 
 
@@ -2249,8 +2252,8 @@ def overlap_problems(wf):
     for nid, n in nodes.items():
         try:
             rects.append((nid, n["x"], n["y"], card_height(n, nodes, edges)))
-        except Exception:
-            continue
+        except Exception as e:
+            logger.debug("Generated node %s has no usable position: %s", nid, e)
     out = []
     w, gap = GENERATE_NODE_WIDTH, GENERATE_MIN_GAP
     for i, (a, ax, ay, ah) in enumerate(rects):
@@ -2622,8 +2625,8 @@ class WorkflowRunner:
         async def go():
             try:
                 await self.backend.stop_job(job_id)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Stopping job %s failed: %s", job_id, e)
         self.spawn(go())
 
     def stop_workflow(self):
@@ -2932,7 +2935,7 @@ class InProcessBackend:
 
         def work():
             with _move_lock:
-                return run_once(operation_id, lambda: move_folder_checked(src, dst))
+                return run_once(operation_id, lambda: move_folder_checked(src, dst), scope="move")
 
         try:
             return await asyncio.to_thread(work)
@@ -2964,7 +2967,7 @@ class RunHost:
 
     def log(self, node_id, message, level="info", notify=False):
         self.log_seq += 1
-        entry = {"seq": self.log_seq, "at": time.time(), "nodeId": node_id, "message": message, "level": level}
+        entry = {"seq": self.log_seq, "at": iso_time(time.time()), "nodeId": node_id, "message": message, "level": level}
         if notify:
             entry["notify"] = True
         self.logs.append(entry)
@@ -3002,7 +3005,7 @@ class Run:
 
     def summary(self):
         return {"id": self.id, "workflow_id": self.workflow_id, "name": self.name, "status": self.status,
-                "error": self.error, "created_at": self.created_at, "finished_at": self.finished_at}
+                "error": self.error, "created_at": iso_time(self.created_at), "finished_at": iso_time(self.finished_at)}
 
     # The API Response node's {field: value} (its "out") as of now (no value -> null); None without one.
     def response(self):
@@ -3034,6 +3037,11 @@ class Run:
         return {**self.summary(), "workflow_running": workflow_running, "run_state": to_jsonable(self.runner.run_state),
                 "nodes": to_jsonable(self.host.nodes), "outputs": self.outputs(), "response": self.response(),
                 "logs": [l for l in self.host.logs if l["seq"] > since]}
+
+
+# Local time as ISO 8601 (API output), None stays None.
+def iso_time(t):
+    return None if t is None else datetime.fromtimestamp(t).astimezone().isoformat(timespec="milliseconds")
 
 
 def _drop_old_runs():

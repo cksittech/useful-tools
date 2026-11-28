@@ -2,32 +2,50 @@
 # Definitions: API request models, node types/ports, placeholder patterns and run limits.
 
 import re
+from typing import Annotated
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 # --- Request models --------------------------------------------------------------
+
+# Text with at least one non-space character (the schema says so too, so blanks are 422).
+NonBlank = Annotated[str, Field(pattern=r"\S")]
+# A real JSON number: no numeric strings, booleans, NaN or Infinity.
+Number = Annotated[float, Field(strict=True, allow_inf_nan=False)]
+
+
+# One output port of an AI Node; children are an object's fields. key/name are
+# required: Generate Workflow reads them from every saved node.
+class OutputField(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    key: str
+    name: str
+    valueType: str = "string"
+    enumValues: list = []
+    description: str = ""
+    children: list["OutputField"] = []
 
 
 # POST/PUT /nodes request body: one AI Node definition.
 class NodeSaveRequest(BaseModel):
-    name: str
-    content: str
-    outputs: list[dict] = []
+    name: NonBlank
+    content: NonBlank
+    outputs: list[OutputField] = []
 
 
 # POST/PUT /workflows request body: the whole canvas (nodes, edges, viewport).
 class WorkflowSaveRequest(BaseModel):
-    name: str
-    nodes: dict = {}
+    name: NonBlank
+    nodes: dict[str, dict] = {}
     edges: list[dict] = []
     pan: dict | None = None
-    zoom: float | None = None
+    zoom: Number | None = None
 
 
 # POST /runs request body: a graph to run server-side as-is (the editor's
 # current canvas — unlike POST /workflows/{id}/runs, which runs a saved one).
 class RunRequest(BaseModel):
-    nodes: dict = {}
+    nodes: dict[str, dict] = {}
     edges: list[dict] = []
     name: str | None = None
     # Set: retry just this AI Node (the editor's per-node Retry) instead
@@ -38,7 +56,7 @@ class RunRequest(BaseModel):
 # POST /codex/jobs request body: a AI Node's filled prompt plus its
 # output JSON Schema (built from the node's output ports).
 class CodexJobRequest(BaseModel):
-    prompt: str
+    prompt: NonBlank
     output_schema: dict | None = None
     node_id: str | None = None
     # Client-chosen idempotency key — a resend with the same key returns the
@@ -48,28 +66,28 @@ class CodexJobRequest(BaseModel):
 
 # POST /workflows/generate request body: what the workflow should do, in plain words.
 class GenerateWorkflowRequest(BaseModel):
-    request: str
+    request: NonBlank
 
 
 # POST /open-path request body: an OS path to reveal in File Explorer.
 class OpenPathRequest(BaseModel):
-    path: str
+    path: NonBlank
 
 
 # POST /fs/move-folder request body: a Move node's source/destination pair.
 class MoveFolderRequest(BaseModel):
-    src: str
-    dst: str
+    src: NonBlank
+    dst: NonBlank
     # Same idempotency key as CodexJobRequest.operation_id.
     operation_id: str | None = None
 
 
 # POST /evaluate request body: the editor's canvas, for its live view (common.editor_view).
 class EvaluateRequest(BaseModel):
-    nodes: dict = {}
+    nodes: dict[str, dict] = {}
     edges: list[dict] = []
     # The workflow loop is running (Gate's waiting border needs it).
-    running: bool = False
+    running: StrictBool = False
     # The live run's per-node run state (snapshot "run_state"), for waiting reasons.
     run_state: dict = {}
 

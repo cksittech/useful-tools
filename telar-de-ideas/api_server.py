@@ -8,13 +8,19 @@
 # Also runs whole workflows server-side (/runs).
 #
 # Start: $env:PYTHONDONTWRITEBYTECODE = "1"; uvicorn api_server:app --reload --host 127.0.0.1 --port 9014
+import ctypes
 import json
-import subprocess
+import re
 import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exception_handlers import http_exception_handler
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import common
 from data import (
@@ -30,7 +36,12 @@ from data import (
     WorkflowSaveRequest,
 )
 
-app = FastAPI()
+# Statuses the handlers raise, documented on every operation.
+app = FastAPI(responses={
+    400: {"description": "Invalid request"},
+    404: {"description": "Not found"},
+    409: {"description": "Ambiguous workflow name"},
+})
 
 # Only the GitHub Pages copy and index.html opened as file:// (Origin "null") may call this;
 # any other site open in the browser could otherwise drive Codex / folder moves on this PC.
@@ -42,32 +53,50 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+# A 405 lists every method of the path, not just the first route's (GET and POST /runs are two routes).
+@app.exception_handler(StarletteHTTPException)
+async def http_error(request: Request, exc: StarletteHTTPException):
+    if exc.status_code == 405:
+        methods = {m for r in app.routes if getattr(r, "methods", None) and r.path_regex.match(request.url.path) for m in r.methods}
+        exc.headers = {**(exc.headers or {}), "Allow": ", ".join(sorted(methods))}
+    return await http_exception_handler(request, exc)
+
+
+# 422 without echoing the rejected input: a NaN there would make the response itself fail (500).
+@app.exception_handler(RequestValidationError)
+async def validation_error(request: Request, exc: RequestValidationError):
+    errors = [{k: v for k, v in e.items() if k != "input"} for e in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
+
 # --- Saved records (AI Node definitions / workflows) --------------------
 # Both are CRUD over a JSON record store (common.list_records etc.) — one file
 # per record. Only the folder and the stored fields differ.
 
 
-# Path of an existing record, else 404.
+# Path of an existing record, else 404. Ids are digits/_ only, so "..\" can't leave the folder.
 def _existing_record_path(folder: Path, record_id: str, label: str) -> Path:
     path = folder / f"{record_id}.json"
-    if not path.exists():
+    if not re.fullmatch(r"[0-9_]+", record_id) or not path.exists():
         raise HTTPException(status_code=404, detail=f"{label} not found.")
     return path
 
 
 def _node_data(req: NodeSaveRequest) -> dict:
-    name = req.name.strip()
-    content = req.content.strip()
-    if not name or not content:
-        raise HTTPException(status_code=400, detail="Name and content are required.")
-    return {"name": name, "content": content, "outputs": req.outputs}
+    return {"name": req.name.strip(), "content": req.content.strip(), "outputs": [o.model_dump() for o in req.outputs]}
 
 
 def _workflow_data(req: WorkflowSaveRequest) -> dict:
-    name = req.name.strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="Name is required.")
-    return {"name": name, "nodes": req.nodes, "edges": req.edges, "pan": req.pan, "zoom": req.zoom}
+    return {"name": req.name.strip(), "nodes": req.nodes, "edges": req.edges, "pan": req.pan, "zoom": req.zoom}
 
 
 @app.get("/nodes")
@@ -157,8 +186,6 @@ def evaluate(req: EvaluateRequest):
 @app.post("/codex/jobs")
 def create_codex_job(req: CodexJobRequest):
     prompt = req.prompt.strip()
-    if not prompt:
-        raise HTTPException(status_code=400, detail="Prompt is required.")
 
     # A resend with the same operation_id gets the first call's job_id back.
     return common.start_codex_job(prompt, req.output_schema, req.node_id, req.operation_id)
@@ -168,10 +195,7 @@ def create_codex_job(req: CodexJobRequest):
 # GET /codex/jobs/{id}; its output holds the workflow, which is not saved.
 @app.post("/workflows/generate")
 def generate_workflow(req: GenerateWorkflowRequest):
-    request = req.request.strip()
-    if not request:
-        raise HTTPException(status_code=400, detail="Request is required.")
-    return common.start_generate_job(request)
+    return common.start_generate_job(req.request.strip())
 
 
 @app.get("/codex/jobs")
@@ -216,12 +240,12 @@ def open_path(req: OpenPathRequest):
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"Path not found: {path}")
 
-    if path.is_dir():
-        subprocess.Popen(["explorer", str(path)])
-    else:
-        # /select, and the path must be one argv item with no space between
-        # them, or explorer ignores the flag and just opens a new window.
-        subprocess.Popen(["explorer", f"/select,{path}"])
+    # A file opens its folder with it selected; /select, and the quoted path
+    # must touch, or explorer ignores the flag and just opens a new window.
+    args = f'"{path}"' if path.is_dir() else f'/select,"{path}"'
+    code = ctypes.windll.shell32.ShellExecuteW(None, "open", "explorer.exe", args, None, 1)
+    if code <= 32:
+        raise HTTPException(status_code=500, detail=f"Explorer could not be started (ShellExecute code {code}).")
     return {"ok": True}
 
 
@@ -235,7 +259,7 @@ def move_folder(req: MoveFolderRequest):
     # The whole handler (validation included) runs once per operation_id —
     # a resend after a successful move would otherwise 404 on the now-gone src.
     try:
-        return common.run_once(req.operation_id, lambda: common.move_folder_checked(req.src, req.dst))
+        return common.run_once(req.operation_id, lambda: common.move_folder_checked(req.src, req.dst), scope="move")
     except common.MoveError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
 

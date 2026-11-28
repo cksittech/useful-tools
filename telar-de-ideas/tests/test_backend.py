@@ -124,6 +124,11 @@ class ApiDedupTest(unittest.TestCase):
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
+    def test_move_error_is_not_replayed_on_codex_job(self):
+        body = {"src": "Z:/__no_such__", "dst": "Z:/__no_such2__", "operation_id": "shared-op"}
+        self.assertEqual(self.client.post("/fs/move-folder", json=body).status_code, 404)
+        self.assertEqual(self.client.post("/codex/jobs", json={"prompt": "hi", "operation_id": "shared-op"}).status_code, 200)
+
     def test_stop_unknown_job_is_404(self):
         self.assertEqual(self.client.post("/codex/jobs/nope/stop").status_code, 404)
 
@@ -153,7 +158,7 @@ class StopTest(unittest.TestCase):
         # Stop lands after thread.turn() started but before the handle is published.
         FakeCodex.on_turn = lambda: common.request_stop("j-race")
         common.run_codex_job("j-race", "p", None)
-        assert FakeCodex.last_turn is not None
+        self.assertIsNotNone(FakeCodex.last_turn)
         self.assertTrue(FakeCodex.last_turn.interrupted)
         self.assertEqual(common.codex_jobs["j-race"]["status"], "stopped")
 
@@ -195,8 +200,11 @@ class RecordCrudTest(unittest.TestCase):
 
     def test_node_crud(self):
         c = self.client
-        self.assertEqual(c.post("/nodes", json={"name": " ", "content": "x"}).status_code, 400)
-        a = c.post("/nodes", json={"name": "A", "content": " hi ", "outputs": [{"key": "o"}]}).json()
+        self.assertEqual(c.post("/nodes", json={"name": " ", "content": "x"}).status_code, 422)
+        self.assertEqual(c.post("/nodes", json={"name": "A", "content": "x", "outputs": [{"key": "o"}]}).status_code, 422)
+        self.assertEqual(c.post("/nodes", json={"name": "A", "content": "x", "outputs": [{"key": "o", "name": "O", "children": [{}]}]}).status_code, 422)
+        a = c.post("/nodes", json={"name": "A", "content": " hi ", "outputs": [{"key": "o", "name": "O", "defaultValue": "d"}]}).json()
+        self.assertEqual(a["outputs"], [{"key": "o", "name": "O", "valueType": "string", "enumValues": [], "description": "", "children": [], "defaultValue": "d"}])
         b = c.post("/nodes", json={"name": "B", "content": "yo"}).json()
         self.assertEqual(a["content"], "hi")
         self.assertNotEqual(a["id"], b["id"])  # same-second save gets a "_N" suffix
@@ -209,7 +217,10 @@ class RecordCrudTest(unittest.TestCase):
 
     def test_workflow_crud(self):
         c = self.client
-        self.assertEqual(c.post("/workflows", json={"name": ""}).status_code, 400)
+        self.assertEqual(c.post("/workflows", json={"name": ""}).status_code, 422)
+        for zoom in ('"1.5"', "true", "NaN"):
+            body = '{"name": "W", "zoom": %s}' % zoom
+            self.assertEqual(c.post("/workflows", content=body, headers={"Content-Type": "application/json"}).status_code, 422)
         w = c.post("/workflows", json={"name": "W", "nodes": {"n1": {}}, "edges": []}).json()
         (common.WORKFLOWS_DIR / "broken.json").write_text("{", encoding="utf-8")  # skipped by the list
         self.assertEqual(c.get("/workflows").json()["workflows"], [{"id": w["id"], "name": "W", "node_count": 1}])
@@ -218,6 +229,18 @@ class RecordCrudTest(unittest.TestCase):
         self.assertEqual(c.put(f"/workflows/{w['id']}", json={"name": "W2", "zoom": 2}).json()["zoom"], 2)
         self.assertEqual(c.delete(f"/workflows/{w['id']}").json(), {"ok": True})
         self.assertEqual(c.get(f"/workflows/{w['id']}").status_code, 404)
+
+    def test_id_cannot_leave_folder(self):
+        c = self.client
+        common.NODE_AI_DIR.mkdir(parents=True)
+        common.WORKFLOWS_DIR.mkdir(parents=True)
+        outside = self.tmp / "outside.json"
+        outside.write_text('{"name": "outside"}', encoding="utf-8")
+        for kind in ("nodes", "workflows"):
+            self.assertEqual(c.get(f"/{kind}/..%5Coutside").status_code, 404 if kind == "workflows" else 405)
+            self.assertEqual(c.put(f"/{kind}/..%5Coutside", json={"name": "x", "content": "x"}).status_code, 404)
+            self.assertEqual(c.delete(f"/{kind}/..%5Coutside").status_code, 404)
+        self.assertEqual(outside.read_text(encoding="utf-8"), '{"name": "outside"}')
 
 
 class EditorApiTest(unittest.TestCase):
@@ -238,6 +261,31 @@ class EditorApiTest(unittest.TestCase):
         self.assertEqual(view["nodes"]["o"]["body"], [{"kind": "value", "text": "2"}])
         self.assertEqual(view["nodes"]["o"]["title"], "Output")
         self.assertEqual(view["issues"], [])
+
+    def test_evaluate_rejects_non_object_node(self):
+        self.assertEqual(self.client.post("/evaluate", json={"nodes": {"a": 1}}).status_code, 422)
+
+    def test_evaluate_running_must_be_bool(self):
+        self.assertEqual(self.client.post("/evaluate", json={"running": "true"}).status_code, 422)
+        r = self.client.post("/evaluate", content='{"running": NaN}', headers={"Content-Type": "application/json"})
+        self.assertEqual((r.status_code, r.json()["detail"][0]["loc"]), (422, ["body", "running"]))
+
+    def test_security_headers(self):
+        h = self.client.get("/health").headers
+        self.assertEqual((h["X-Content-Type-Options"], h["Cross-Origin-Resource-Policy"], h["Cache-Control"]), ("nosniff", "same-origin", "no-store"))
+
+    def test_405_lists_every_method_of_the_path(self):
+        r = self.client.request("OPTIONS", "/runs")
+        self.assertEqual((r.status_code, r.headers["Allow"]), (405, "GET, POST"))
+        self.assertEqual(self.client.delete("/health").status_code, 405)
+
+    def test_cors_preflight_still_works(self):
+        r = self.client.options("/runs", headers={"Origin": "null", "Access-Control-Request-Method": "POST"})
+        self.assertEqual((r.status_code, r.headers["access-control-allow-origin"]), (200, "null"))
+
+    def test_error_statuses_are_documented(self):
+        responses = self.client.get("/openapi.json").json()["paths"]["/workflows/{workflow_id}"]["put"]["responses"]
+        self.assertTrue({"400", "404", "409", "422"} <= set(responses))
 
 
 # Codex answers for workflow generation: a wire on a wrong port, then the fix.
@@ -371,8 +419,8 @@ class GenerateTest(unittest.TestCase):
         self.assertIn('no input port "value"', self.calls[2][1])
         self.assertIn("n2 sink, (300, 0), 240x200: [in] / []", self.calls[2][1])
 
-    def test_blank_request_is_400(self):
-        self.assertEqual(TestClient(api_server.app).post("/workflows/generate", json={"request": " "}).status_code, 400)
+    def test_blank_request_is_422(self):
+        self.assertEqual(TestClient(api_server.app).post("/workflows/generate", json={"request": " "}).status_code, 422)
 
 
 if __name__ == "__main__":
